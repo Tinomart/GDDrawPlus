@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "home": "index.md",
   "sections": [
     {
@@ -23,7 +23,10 @@
     {
       "title": "3D Texture Painting",
       "pages": [
-        {"title": "Painting in 3D", "path": "3d-painting.md", "description": "Import a hierarchy, paint UV textures, use Scene Sync, and save changes."}
+        {"title": "Painting in 3D", "path": "3d-painting.md", "description": "Import a hierarchy, paint UV textures, use Scene Sync, and save changes."},
+        {"title": "Paint Channels", "path": "paint-channels.md", "description": "Paint roughness, metallic, occlusion, height, normal and emission; meshes without a material; scaling textures."},
+        {"title": "Material Brush", "path": "material-brush.md", "description": "Paint with PBR materials, texture sets and shaders, and paint several channels at once."},
+        {"title": "UV Tools", "path": "uv-tools.md", "description": "Auto Unwrap and the UV Editor."}
       ]
     },
     {
@@ -32,7 +35,7 @@
         {"title": "Saving and Files", "path": "saving-and-files.md", "description": "PNG export, layered projects, closing sessions, and project storage."},
         {"title": "Shortcuts", "path": "shortcuts.md", "description": "Keyboard and mouse reference."},
         {"title": "Troubleshooting", "path": "troubleshooting.md", "description": "Solutions for common 2D, layer, and 3D workflow questions."},
-        {"title": "Known Limitations", "path": "known-limitations.md", "description": "Current boundaries of GDDraw 0.3.0."}
+        {"title": "Known Limitations", "path": "known-limitations.md", "description": "Current boundaries of GDDraw Plus 0.3.1."}
       ]
     }
   ]

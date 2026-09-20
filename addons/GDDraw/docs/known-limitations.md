@@ -1,11 +1,12 @@
 # Known Limitations
 
-This page describes the intended boundaries of GDDraw 0.3.0 rather than unfinished behavior that should silently fail.
+This page describes the intended boundaries of GDDraw Plus 0.3.1 rather than unfinished behavior that should silently fail.
 
 ## 3D materials and channels
 
-- 3D painting currently targets albedo textures on `StandardMaterial3D` surfaces.
-- Shader materials and additional texture channels are not editable.
+- 3D painting targets `StandardMaterial3D` surfaces. Albedo, emission, roughness, metallic, ambient occlusion, height and normal textures can be painted (see [Paint Channels](paint-channels.md)); other material types are refused with a reason.
+- Shader materials cannot be painted into. They can be used as sources of the [Material Brush](material-brush.md), which bakes them into images.
+- CSG shapes only support the albedo channel.
 - Supported CSG painting is limited to generated geometry and material configurations that provide deterministic triangle UVs.
 - Multi-material generated CSG results must be prepared outside GDDraw.
 - `CSGTorus3D` creation is deferred because its generated seam triangles can interpolate across unrelated texture regions.
@@ -21,7 +22,7 @@ This page describes the intended boundaries of GDDraw 0.3.0 rather than unfinish
 
 - Very large textures require more memory and may pause briefly during first-time cache and preview initialization.
 - Complex models and visually busy textures can make brush, hover, or UV previews harder to read.
-- Active imported 3D texture sessions protect ordinary canvas resizing and image scaling. Use target-level texture resizing instead.
+- Resize Canvas, Crop and Trim are disabled in 3D sessions because they would shift pixels against the UVs. Use Image > Scale Textures to change the resolution of all textures of an object.
 
 ## Interface boundaries
 

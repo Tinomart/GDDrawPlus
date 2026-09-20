@@ -2,6 +2,26 @@
 
 New features, improvements, and fixes in GDDraw, with the latest version first. Scroll down for earlier releases.
 
+## 0.3.1 - GDDraw Plus
+
+GDDraw Plus is a community fork of GDDraw 0.3.0. Everything in 0.3.0 is unchanged; these are the additions.
+
+### UV tools
+
+- A new **UV** menu with **Auto Unwrap** (Smart or simple projections) and a full **UV Editor**. See [UV Tools](uv-tools.md).
+
+### Paint channels and the Material Brush
+
+- Paint **Emission, Roughness, Metallic, Ambient Occlusion, Height and Normal** textures, not only albedo. See [Paint Channels](paint-channels.md).
+- The new **Material Brush** paints with PBR materials, ORM materials, texture sets and baked shaders, and can paint several channels with one stroke. See [Material Brush](material-brush.md).
+- The height, occlusion and emission settings of a material are copied to the painted material so it looks like the original.
+
+### 3D workflow
+
+- Meshes without a material, including Godot's built-in shapes, can be opened; GDDraw creates the material and texture.
+- **Image > Scale Textures** works in 3D sessions and is fast on large textures.
+- New textures are replaced by their imported PNG in the material, so saved scenes no longer embed the pixels.
+- GDDraw's keyboard shortcuts only act after you have clicked inside GDDraw.
 ## 0.3.0 — Layers and multi-object painting
 
 ### Layered artwork
