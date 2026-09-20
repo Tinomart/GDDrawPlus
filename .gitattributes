@@ -1,2 +1,17 @@
 # Normalize text files and keep repository line endings consistent.
 * text=auto eol=lf
+
+# Files left out of "git archive", GitHub's automatic "Source code" downloads and Godot Asset Library installs, so they
+# contain the addon only (addons/GDDraw carries its own LICENSE, THIRD_PARTY_NOTICES.md and manual).
+/README.md export-ignore
+/CHANGELOG.md export-ignore
+/LICENSE export-ignore
+/THIRD_PARTY_NOTICES.md export-ignore
+/docs export-ignore
+/test-suite export-ignore
+/tools export-ignore
+/project.godot export-ignore
+/icon.svg export-ignore
+/.editorconfig export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
