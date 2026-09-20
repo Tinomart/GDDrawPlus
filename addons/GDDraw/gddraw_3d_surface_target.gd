@@ -186,7 +186,8 @@ func validate_geometry(slot := -2) -> Dictionary:
 		if arrays.size() <= Mesh.ARRAY_TEX_UV:
 			continue
 		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+		# A mesh without UVs stores null here; assigning that to a typed array would throw.
+		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays[Mesh.ARRAY_TEX_UV] is PackedVector2Array else PackedVector2Array()
 		if vertices.size() < 3 or uvs.size() != vertices.size():
 			continue
 		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] is PackedInt32Array else PackedInt32Array()
@@ -196,7 +197,7 @@ func validate_geometry(slot := -2) -> Dictionary:
 	if usable_surfaces == 0:
 		return _result(
 			STATUS_ERROR,
-			"%s has no usable triangle UV data and cannot currently be texture-painted. GDDraw will not fabricate UV coordinates."
+			"%s has no usable triangle UV data and cannot currently be texture-painted. GDDraw will not silently fabricate UV coordinates; use UV > Auto Unwrap… in GDDraw's menu bar to generate them."
 			% get_source_label()
 		)
 	return _result(STATUS_OK, "")
@@ -655,7 +656,7 @@ func _make_geometry_signature(mesh: Mesh) -> String:
 	for surface_index in range(mesh.get_surface_count()):
 		var arrays := mesh.surface_get_arrays(surface_index)
 		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] if arrays.size() > Mesh.ARRAY_VERTEX else PackedVector3Array()
-		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays.size() > Mesh.ARRAY_TEX_UV else PackedVector2Array()
+		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays.size() > Mesh.ARRAY_TEX_UV and arrays[Mesh.ARRAY_TEX_UV] is PackedVector2Array else PackedVector2Array()
 		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] is PackedInt32Array else PackedInt32Array()
 		parts.push_back("%d:%d:%d:%s:%s" % [
 			vertices.size(),

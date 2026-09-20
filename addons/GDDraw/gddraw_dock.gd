@@ -331,6 +331,7 @@ const UPDATER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_updater.gd"
 const GDDrawUpdater := preload("res://addons/GDDraw/gddraw_updater.gd")
 const PLUGIN_SCRIPT_PATH := "res://addons/GDDraw/GDDraw.gd"
 const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
+const UV_TOOLS_SCRIPT_PATH := "res://addons/GDDraw/uv/gddraw_uv_tools.gd"
 const TOOL_BUTTON_SIZE := Vector2(28, 28)
 const TOOL_ICON_MAX_WIDTH := 18
 const SESSION_PICKER_NAME_COLUMN := 0
@@ -564,6 +565,8 @@ enum MenuCommand {
 	GODOT_USE_SELECTED_MESH,
 	GODOT_SAVE_ACTIVE_TEXTURE,
 	GODOT_CREATE_CSG_BOX,
+	UV_AUTO_UNWRAP,
+	UV_EDITOR,
 	HELP_DOCUMENTATION,
 	HELP_ABOUT,
 	HELP_CHECK_UPDATES,
@@ -609,6 +612,8 @@ var _brush_preset_menu: PopupMenu
 var _recent_brush_size_menu: PopupMenu
 var _view_menu: PopupMenu
 var _godot_menu: PopupMenu
+var _uv_menu: PopupMenu
+var _uv_tools: Node
 var _help_menu: PopupMenu
 var _documentation_browser
 var _help_dialog: AcceptDialog
@@ -867,6 +872,7 @@ var _keep_pixels: CheckBox
 var _resize_canvas_button: Button
 var _load_selected_mesh_button: Button
 var _uv_overlay_toggle: Button
+var _last_click_inside_gddraw := false
 var _preview_orientation_button: Button
 var _preview_orientation_reset_button: Button
 var _preview_scene_orientation_button: Button
@@ -1258,6 +1264,7 @@ func _draw() -> void:
 
 func _input(event: InputEvent) -> void:
 	_ensure_helpers()
+	_track_gddraw_click(event)
 	if not _layers_rename_context.is_empty() and event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
 			# Defer the rebuild until the Tree's native editor has finished this
@@ -1272,7 +1279,13 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	var action: String = _shortcuts.get_action(event)
-	if action.is_empty() or not _shortcut_is_scoped_to_gddraw():
+	if not _shortcut_is_scoped_to_gddraw():
+		return
+	if action.is_empty():
+		# Menu accelerators (Save, Undo, New, ...) are dispatched here rather than by the MenuBar,
+		# whose accelerators are window-wide and would steal Godot's own shortcuts.
+		if _dispatch_menu_accelerator(event):
+			get_viewport().set_input_as_handled()
 		return
 
 	if action == GDDrawShortcutMap.ACTION_COPY:
@@ -1734,6 +1747,12 @@ func _build_menu_bar() -> void:
 	add_child(_menu_bar_background)
 
 	_menu_bar = MenuBar.new()
+	# A MenuBar fires its items' accelerators (Ctrl+S, Ctrl+Z, ...) whenever the editor window sees
+	# the key, focused or not, which stole Godot's own shortcuts. They are dispatched by _input()
+	# instead, and only after the user clicked inside GDDraw.
+	_menu_bar.set_process_shortcut_input(false)
+	_menu_bar.tree_entered.connect(func() -> void: _menu_bar.set_process_shortcut_input(false))
+	_menu_bar.ready.connect(func() -> void: _menu_bar.set_process_shortcut_input(false))
 	_menu_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_menu_bar.prefer_global_menu = false
 	_menu_bar.flat = false
@@ -1843,6 +1862,10 @@ func _build_menu_bar() -> void:
 	_godot_menu.add_separator()
 	_godot_menu.add_item("Use Selected 3D Object", MenuCommand.GODOT_USE_SELECTED_MESH)
 	_godot_menu.add_item("Save Active Texture", MenuCommand.GODOT_SAVE_ACTIVE_TEXTURE)
+
+	_uv_menu = _add_menu("UV")
+	_uv_menu.add_item("Auto Unwrap…", MenuCommand.UV_AUTO_UNWRAP)
+	_uv_menu.add_item("UV Editor…", MenuCommand.UV_EDITOR)
 
 	_help_menu = _add_menu("Help")
 	_populate_help_menu()
@@ -2081,6 +2104,10 @@ func _on_menu_command(command_id: int) -> void:
 			_load_selected_3d_mesh_texture()
 		MenuCommand.GODOT_SAVE_ACTIVE_TEXTURE:
 			_save_3d_texture()
+		MenuCommand.UV_AUTO_UNWRAP:
+			_on_uv_menu_auto_unwrap()
+		MenuCommand.UV_EDITOR:
+			_on_uv_menu_editor()
 		MenuCommand.HELP_DOCUMENTATION:
 			_open_documentation("index.md")
 		MenuCommand.HELP_WHATS_NEW:
@@ -2256,6 +2283,20 @@ func _sync_menu_state() -> void:
 	)
 	_set_menu_item_disabled(_godot_menu, MenuCommand.GODOT_USE_SELECTED_MESH, not _canvas_mode_3d)
 	_set_menu_item_disabled(_godot_menu, MenuCommand.GODOT_SAVE_ACTIVE_TEXTURE, not has_active_texture)
+	# The UV tools act on the selected MeshInstance3D in any canvas mode; they explain in the
+	# status bar when nothing suitable is selected, so the entries stay enabled.
+	_set_menu_item_disabled(_uv_menu, MenuCommand.UV_AUTO_UNWRAP, false)
+	_set_menu_item_tooltip(
+		_uv_menu,
+		MenuCommand.UV_AUTO_UNWRAP,
+		"Generate UVs for the selected MeshInstance3D. Choose the method (Smart, Box, Cylinder, Sphere, Planar) in the next step. Saves a new mesh file and keeps bone weights."
+	)
+	_set_menu_item_disabled(_uv_menu, MenuCommand.UV_EDITOR, false)
+	_set_menu_item_tooltip(
+		_uv_menu,
+		MenuCommand.UV_EDITOR,
+		"Open the UV editor for the selected MeshInstance3D: seams, unwrap, pack, relax, move/rotate/scale UVs."
+	)
 
 
 func _set_menu_item_disabled(menu: PopupMenu, command_id: int, disabled: bool) -> void:
@@ -14855,6 +14896,81 @@ func _on_uv_overlay_toggled(enabled: bool) -> void:
 	_sync_menu_state()
 
 
+## The MeshInstance3D the UV menu acts on: the selected MeshInstance3D (or the only one below the
+## selected node), otherwise the mesh of the open 3D paint session.
+func _get_uv_target() -> MeshInstance3D:
+	if _plugin:
+		var selected := _plugin.get_editor_interface().get_selection().get_selected_nodes()
+		for node in selected:
+			if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+				return node
+		for node in selected:
+			var meshes := node.find_children("*", "MeshInstance3D", true, false)
+			if meshes.size() == 1 and (meshes[0] as MeshInstance3D).mesh != null:
+				return meshes[0]
+	var session_node := _get_uv_session_node()
+	if session_node and session_node.mesh != null:
+		return session_node
+	return null
+
+
+## The MeshInstance3D of the open 3D paint session, or null when no session is open.
+func _get_uv_session_node() -> MeshInstance3D:
+	if _texture_3d_session and _texture_3d_session.has_active_session() and _texture_3d_session.target:
+		return _texture_3d_session.target.source_node as MeshInstance3D
+	return null
+
+
+func _on_uv_menu_auto_unwrap() -> void:
+	var target := _get_uv_target()
+	if not target:
+		_set_status("Select a MeshInstance3D in the scene tree first (CSG shapes are generated meshes and cannot be unwrapped).")
+		return
+	if not _ensure_uv_tools():
+		return
+	_uv_tools.call("request_unwrap", target, _get_uv_session_node() == target)
+
+
+func _on_uv_menu_editor() -> void:
+	var target := _get_uv_target()
+	if not target:
+		_set_status("Select a MeshInstance3D in the scene tree first (CSG shapes are generated meshes and cannot be edited).")
+		return
+	if not _ensure_uv_tools():
+		return
+	_uv_tools.call("open_editor", target)
+
+
+func _ensure_uv_tools() -> bool:
+	if _uv_tools:
+		return true
+	_uv_tools = _make_script_instance(UV_TOOLS_SCRIPT_PATH, null) as Node
+	if not _uv_tools:
+		_set_status("Could not load the GDDraw UV tools.")
+		return false
+	_uv_tools.call("setup", _plugin)
+	_uv_tools.connect("unwrap_finished", on_uv_mesh_changed)
+	add_child(_uv_tools)
+	return true
+
+
+## Called when the UV tools changed a node's mesh, so a live paint session follows.
+func on_uv_mesh_changed(result: Dictionary, mesh_instance: MeshInstance3D) -> void:
+	var message := str(result.get("message", ""))
+	if str(result.get("status", "error")) != "ok":
+		_set_status(message if not message.is_empty() else "UV operation failed.")
+		return
+	# The live 3D session (if any) follows the node's mesh: refresh it right away instead of
+	# waiting for the periodic geometry poll, so the painter shows the new UVs immediately.
+	var refreshed := false
+	if _texture_3d_session and _texture_3d_session.has_active_session() and _texture_3d_session.target:
+		if _texture_3d_session.target.source_node == mesh_instance:
+			_refresh_active_3d_target_geometry()
+			_update_3d_context_control_visibility()
+			refreshed = true
+	_set_status(message + (" The 3D painter now shows the new UVs." if refreshed else " Use the selected-surface button to start painting."))
+
+
 func _set_uv_overlay_enabled(enabled: bool) -> void:
 	if not _uv_overlay_toggle:
 		return
@@ -18860,7 +18976,59 @@ func _colors_match(left: Color, right: Color) -> bool:
 	)
 
 
+## Remembers whether the last mouse press landed inside GDDraw. Keyboard shortcuts belong to
+## GDDraw only after the user clicked in it; hovering over it does not count.
+func _track_gddraw_click(event: InputEvent) -> void:
+	var button := event as InputEventMouseButton
+	if button == null or not button.pressed:
+		return
+	_last_click_inside_gddraw = is_visible_in_tree() and get_global_rect().has_point(button.position)
+
+
 func _shortcut_is_scoped_to_gddraw() -> bool:
+	if not is_visible_in_tree() or not _last_click_inside_gddraw:
+		return false
+	if _open_dialog and _open_dialog.visible:
+		return false
+	if _save_dialog and _save_dialog.visible:
+		return false
+	if _save_location_dialog and _save_location_dialog.visible:
+		return false
+	if _font_location_dialog and _font_location_dialog.visible:
+		return false
+	if _text_font_dialog and _text_font_dialog.visible:
+		return false
+
+	# Never take keys away from a text field, in GDDraw or anywhere else in the editor.
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner and (focus_owner is LineEdit or focus_owner is TextEdit or focus_owner is SpinBox):
+		return false
+	return true
+
+
+func _dispatch_menu_accelerator(event: InputEvent) -> bool:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return false
+	var code: int = key.get_keycode_with_modifiers()
+	if OS.get_name() == "macOS" and (code & KEY_MASK_META):
+		code = (code & ~KEY_MASK_META) | KEY_MASK_CTRL
+	_sync_menu_state()
+	for popup in [_file_menu, _edit_menu, _image_menu, _select_menu, _tool_menu, _view_menu, _godot_menu, _help_menu]:
+		if not popup:
+			continue
+		for index in range(popup.item_count):
+			if popup.is_item_separator(index) or popup.is_item_disabled(index):
+				continue
+			var accelerator: int = popup.get_item_accelerator(index)
+			if accelerator != 0 and accelerator == code:
+				popup.id_pressed.emit(popup.get_item_id(index))
+				return true
+	return false
+
+
+# Original GDDraw implementation; unused since the UV patch replaced it with the click-scoped version above.
+func _shortcut_is_scoped_to_gddraw_legacy() -> bool:
 	if _open_dialog and _open_dialog.visible:
 		return false
 	if _save_dialog and _save_dialog.visible:
