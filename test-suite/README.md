@@ -1,6 +1,6 @@
 # Test suite
 
-Automated tests for GDDraw Plus. They copy the addon into throwaway projects under your temp folder and run Godot headless there, so they never touch your own projects. Windows and PowerShell 5.1 or newer are needed, and the **console** build of Godot 4.7 or later (`Godot_v4.x-stable_win64_console.exe`).
+Automated tests for GDDrawPlus. They copy the addon into throwaway projects under your temp folder and run Godot headless there, so they never touch your own projects. Windows and PowerShell 5.1 or newer are needed, and the **console** build of Godot 4.7 or later (`Godot_v4.x-stable_win64_console.exe`).
 
     # from the repository root
     $env:GODOT_CONSOLE = "C:\path\to\Godot_v4.7-stable_win64_console.exe"

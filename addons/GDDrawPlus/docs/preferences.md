@@ -65,14 +65,14 @@ Width and height determine the starting dimensions of newly created blank GDDraw
 
 This folder is offered when saving new PNG files. The initial value is `res://gddraw/images`.
 
-- Enter a `res://` project folder or select the folder button to browse. The destination must remain outside `res://addons/GDDraw`.
+- Enter a `res://` project folder or select the folder button to browse. The destination must remain outside `res://addons/GDDrawPlus`.
 - Project overrides are remembered.
 - GDDraw does not create a missing folder merely because Preferences was opened.
 - A missing valid folder is created only when an image is actually written.
 - Changing the default does not move or rename existing PNGs.
 - **Save** continues using an existing document's current path; the default primarily affects new **Save As** destinations and generated image assets.
 
-Keeping generated artwork outside `res://addons/GDDraw` ensures plugin updates can replace the installed package without touching project-owned images.
+Keeping generated artwork outside `res://addons/GDDrawPlus` ensures plugin updates can replace the installed package without touching project-owned images.
 
 ### Fonts
 

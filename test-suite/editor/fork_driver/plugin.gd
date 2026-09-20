@@ -33,11 +33,11 @@ func _check(condition: bool, message: String) -> void:
 
 func _run() -> void:
 	var config := ConfigFile.new()
-	config.load("res://addons/GDDraw/plugin.cfg")
+	config.load("res://addons/GDDrawPlus/plugin.cfg")
 	var version := str(config.get_value("plugin", "version", ""))
-	_check(str(config.get_value("plugin", "name", "")) == "GDDraw Plus", "the plugin is called GDDraw Plus")
+	_check(str(config.get_value("plugin", "name", "")) == "GDDrawPlus", "the plugin is called GDDrawPlus")
 	_check(version != "" and version.split(".").size() == 3, "the version is a plain x.y.z: " + version)
-	var plugin_script := load("res://addons/GDDraw/GDDraw.gd") as GDScript
+	var plugin_script := load("res://addons/GDDrawPlus/GDDraw.gd") as GDScript
 	_check(str(plugin_script.get_script_constant_map().get("PLUGIN_VERSION", "")) == version, "PLUGIN_VERSION matches plugin.cfg")
 	var dock := _find_dock()
 	_check(dock != null, "the dock is up")
@@ -53,9 +53,9 @@ func _run() -> void:
 	var checker = dock.get("_update_checker")
 	_check(checker == null or not checker.is_request_active(), "no update request is running")
 	for file_name in ["LICENSE", "THIRD_PARTY_NOTICES.md"]:
-		_check(FileAccess.file_exists("res://addons/GDDraw/" + file_name), "%s ships inside the addon" % file_name)
-	var notices := FileAccess.get_file_as_string("res://addons/GDDraw/THIRD_PARTY_NOTICES.md")
+		_check(FileAccess.file_exists("res://addons/GDDrawPlus/" + file_name), "%s ships inside the addon" % file_name)
+	var notices := FileAccess.get_file_as_string("res://addons/GDDrawPlus/THIRD_PARTY_NOTICES.md")
 	_check(notices.contains("Gator Model Studio") and notices.contains("Blackwater Gator Studios"), "the notices credit Gator Model Studio")
-	_check(FileAccess.file_exists("res://addons/GDDraw/uv/LICENSE-GatorModelStudio.txt"), "the Gator license text sits next to the UV code")
+	_check(FileAccess.file_exists("res://addons/GDDrawPlus/uv/LICENSE-GatorModelStudio.txt"), "the Gator license text sits next to the UV code")
 	print("FKTEST  RESULT: ", "ALL PASSED" if _fail == 0 else "%d FAILED" % _fail)
 	get_tree().quit(0 if _fail == 0 else 1)

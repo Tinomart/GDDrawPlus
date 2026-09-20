@@ -2,7 +2,7 @@
 class_name GDDraw3DLayerDiscovery
 extends RefCounted
 
-const SurfaceTarget := preload("res://addons/GDDraw/gddraw_3d_surface_target.gd")
+const SurfaceTarget := preload("res://addons/GDDrawPlus/gddraw_3d_surface_target.gd")
 
 const STATUS := "status"
 const MESSAGE := "message"

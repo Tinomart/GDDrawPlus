@@ -50,4 +50,4 @@ Increase the bottom-panel height or editor width, collapse the Layers panel, or 
 
 ## Update installation fails
 
-GDDraw keeps validation, staging, installation, and activation separate. A failed installation attempts to restore the verified previous package. Restart Godot, check the Help update status, and retry only from the authoritative stable release workflow.
+GDDrawPlus does not install updates itself, so this cannot happen here. To update, delete `res://addons/GDDrawPlus` and unzip the newer release from the project's Releases page in its place. Your artwork under `res://gddraw/` is not part of the plugin folder and is not affected.

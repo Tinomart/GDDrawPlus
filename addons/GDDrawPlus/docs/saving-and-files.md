@@ -44,7 +44,7 @@ During a 3D hierarchy session, use **Stop Editing** for the consolidated texture
 
 By default, project-owned files are separated from replaceable plugin files:
 
-- `res://addons/GDDraw/` contains installed plugin code, icons, and this manual.
+- `res://addons/GDDrawPlus/` contains installed plugin code, icons, and this manual.
 - `res://gddraw/images/` contains generated or saved PNG files.
 - `res://gddraw/fonts/` is the default custom-font discovery folder.
 - `res://gddraw/brushes/` is reserved for file-backed brush assets; parameter-only presets use project editor metadata.
@@ -56,6 +56,6 @@ Use **Edit > Preferences > Files** to change the default blank-canvas dimensions
 
 ## Safe updates
 
-Use **Help > Check for Updates** to perform a manual release check. Downloading and installing remain separate explicit actions. A validated update is staged before **Install and Restart** replaces the complete plugin package.
+GDDrawPlus does not update itself: **Help > Check for Updates** only shows a message. To update, delete `res://addons/GDDrawPlus` and unzip the newer release from the project's Releases page in its place.
 
 User-created assets under `res://gddraw/` are outside the replaceable plugin package and are not removed by the updater.

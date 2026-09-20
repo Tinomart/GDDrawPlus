@@ -2,7 +2,7 @@
 class_name GDDrawPngIOHelper
 extends RefCounted
 
-const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
+const StoragePaths := preload("res://addons/GDDrawPlus/gddraw_storage_paths.gd")
 const DEFAULT_SAVE_DIR := StoragePaths.DEFAULT_IMAGE_DIR
 const SETTINGS_SECTION := "GDDraw"
 const DEFAULT_SAVE_DIR_KEY := "default_save_dir"

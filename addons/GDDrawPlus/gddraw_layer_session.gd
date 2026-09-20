@@ -2,7 +2,7 @@
 class_name GDDrawLayerSession
 extends RefCounted
 
-const PaintTarget := preload("res://addons/GDDraw/gddraw_paint_target.gd")
+const PaintTarget := preload("res://addons/GDDrawPlus/gddraw_paint_target.gd")
 
 var session_kind := "2d"
 var source_scene_path := ""

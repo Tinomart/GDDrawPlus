@@ -196,7 +196,7 @@ func _run() -> void:
 	check(skin_ok, "bone data still belongs to the right vertices")
 
 	# GDDraw must now accept this mesh (it refused it before).
-	var target_script = load("res://addons/GDDraw/gddraw_3d_surface_target.gd")
+	var target_script = load("res://addons/GDDrawPlus/gddraw_3d_surface_target.gd")
 	var before_target = target_script.from_node(_make_node_with_mesh(original_mesh))
 	var after_target = target_script.from_node(edited_body)
 	check(before_target == null, "GDDraw rejected the mesh before unwrapping (no UVs)")

@@ -306,36 +306,36 @@ class LayerHierarchyTree:
 			drop_callback.call(at_position, data)
 
 
-const ICON_DIR := "res://addons/GDDraw/icons"
+const ICON_DIR := "res://addons/GDDrawPlus/icons"
 const GODOT_ICON_DIR := ICON_DIR + "/godot"
 enum IconState { NORMAL, SELECTED, DISABLED }
 const ICON_REFRESH_MAX_ATTEMPTS := 180
 const ICON_REFRESH_RETRY_DELAY := 1.0
 const ICON_REFRESH_MAX_DURATION_MSEC := 180000
-const CANVAS_SCRIPT_PATH := "res://addons/GDDraw/gddraw_canvas.gd"
-const HISTORY_SCRIPT_PATH := "res://addons/GDDraw/gddraw_history.gd"
-const PNG_IO_SCRIPT_PATH := "res://addons/GDDraw/gddraw_png_io.gd"
-const SHORTCUTS_SCRIPT_PATH := "res://addons/GDDraw/gddraw_shortcuts.gd"
-const LAYER_SESSION_SCRIPT_PATH := "res://addons/GDDraw/gddraw_layer_session.gd"
-const LAYER_DOCUMENT_SCRIPT_PATH := "res://addons/GDDraw/gddraw_layer_document.gd"
-const TEXTURE_3D_SESSION_SCRIPT_PATH := "res://addons/GDDraw/gddraw_3d_texture_session.gd"
-const BATCH_SAVE_3D_DIALOG_SCRIPT_PATH := "res://addons/GDDraw/gddraw_3d_batch_save_dialog.gd"
-const LAYER_3D_DISCOVERY_SCRIPT_PATH := "res://addons/GDDraw/gddraw_3d_layer_discovery.gd"
-const LAYER_3D_COORDINATOR_SCRIPT_PATH := "res://addons/GDDraw/gddraw_3d_layer_coordinator.gd"
-const DOCUMENTATION_BROWSER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_documentation_browser.gd"
-const DOCUMENTATION_MANIFEST_PATH := "res://addons/GDDraw/docs/navigation.json"
-const MESH_PAINT_CACHE_SCRIPT_PATH := "res://addons/GDDraw/gddraw_mesh_paint_cache.gd"
-const SPRITE_CREATOR_SCRIPT_PATH := "res://addons/GDDraw/editor_integration/gddraw_sprite_creator.gd"
-## GDDraw Plus does not update itself: the built-in updater below is wired to the ORIGINAL GDDraw releases, and installing one
+const CANVAS_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_canvas.gd"
+const HISTORY_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_history.gd"
+const PNG_IO_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_png_io.gd"
+const SHORTCUTS_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_shortcuts.gd"
+const LAYER_SESSION_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_layer_session.gd"
+const LAYER_DOCUMENT_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_layer_document.gd"
+const TEXTURE_3D_SESSION_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_3d_texture_session.gd"
+const BATCH_SAVE_3D_DIALOG_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_3d_batch_save_dialog.gd"
+const LAYER_3D_DISCOVERY_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_3d_layer_discovery.gd"
+const LAYER_3D_COORDINATOR_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_3d_layer_coordinator.gd"
+const DOCUMENTATION_BROWSER_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_documentation_browser.gd"
+const DOCUMENTATION_MANIFEST_PATH := "res://addons/GDDrawPlus/docs/navigation.json"
+const MESH_PAINT_CACHE_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_mesh_paint_cache.gd"
+const SPRITE_CREATOR_SCRIPT_PATH := "res://addons/GDDrawPlus/editor_integration/gddraw_sprite_creator.gd"
+## GDDrawPlus does not update itself: the built-in updater below is wired to the ORIGINAL GDDraw releases, and installing one
 ## would replace this fork with the original (removing UV tools, the Material Brush, ...). A maintainer who publishes releases
 ## for the fork can point the URLs in gddraw_update_checker.gd at them and switch this on.
 const UPDATES_ENABLED := false
-const UPDATE_CHECKER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_update_checker.gd"
-const UPDATER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_updater.gd"
-const GDDrawUpdater := preload("res://addons/GDDraw/gddraw_updater.gd")
-const PLUGIN_SCRIPT_PATH := "res://addons/GDDraw/GDDraw.gd"
-const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
-const UV_TOOLS_SCRIPT_PATH := "res://addons/GDDraw/uv/gddraw_uv_tools.gd"
+const UPDATE_CHECKER_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_update_checker.gd"
+const UPDATER_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_updater.gd"
+const GDDrawUpdater := preload("res://addons/GDDrawPlus/gddraw_updater.gd")
+const PLUGIN_SCRIPT_PATH := "res://addons/GDDrawPlus/GDDraw.gd"
+const StoragePaths := preload("res://addons/GDDrawPlus/gddraw_storage_paths.gd")
+const UV_TOOLS_SCRIPT_PATH := "res://addons/GDDrawPlus/uv/gddraw_uv_tools.gd"
 const TOOL_BUTTON_SIZE := Vector2(28, 28)
 const TOOL_ICON_MAX_WIDTH := 18
 const SESSION_PICKER_NAME_COLUMN := 0
@@ -1984,7 +1984,7 @@ func _populate_help_menu(show_update := false) -> void:
 	_help_menu.add_separator()
 	_help_menu.add_item("Check for Updates...", MenuCommand.HELP_CHECK_UPDATES)
 	_help_menu.add_separator()
-	_help_menu.add_item("About GDDraw Plus", MenuCommand.HELP_ABOUT)
+	_help_menu.add_item("About GDDrawPlus", MenuCommand.HELP_ABOUT)
 
 
 func _build_help_update_badge() -> void:
@@ -2189,10 +2189,10 @@ func _on_menu_command(command_id: int) -> void:
 			_show_update_available_overlay()
 		MenuCommand.HELP_ABOUT:
 			_show_help_dialog(
-				"About GDDraw Plus",
-				"GDDraw Plus v%s (based on GDDraw 0.3.0 by ArdonyxApps)\n\n" % _get_installed_plugin_version()
+				"About GDDrawPlus",
+				"GDDrawPlus v%s (based on GDDraw 0.3.0 by ArdonyxApps)\n\n" % _get_installed_plugin_version()
 				+ "Overview:\n"
-				+ "GDDraw Plus is a community fork of GDDraw, a Godot editor plugin for quick pixel-art and texture-painting work inside the editor. It adds UV unwrapping and a UV editor, paint channels (roughness, metallic, ambient occlusion, height, normal, emission) and a Material Brush that paints with PBR materials.\n\n"
+				+ "GDDrawPlus is a community fork of GDDraw, a Godot editor plugin for quick pixel-art and texture-painting work inside the editor. It adds UV unwrapping and a UV editor, paint channels (roughness, metallic, ambient occlusion, height, normal, emission) and a Material Brush that paints with PBR materials.\n\n"
 				+ "Use it for:\n"
 				+ "Use it to sketch prototype sprites, make small PNG edits, block out texture ideas, and paint albedo textures directly on supported 3D meshes or CSG surfaces. It is built for fast iteration without leaving Godot, with save prompts around the places where scene or texture data can change."
 			)
@@ -8193,7 +8193,7 @@ func _build_update_available_overlay() -> void:
 func _check_for_updates(automatic := false) -> bool:
 	if not UPDATES_ENABLED:
 		if not automatic:
-			_show_update_error_overlay("GDDraw Plus does not update itself. Download new versions from the project's releases page and replace addons/GDDraw.")
+			_show_update_error_overlay("GDDrawPlus does not update itself. Download new versions from the project's releases page and replace addons/GDDrawPlus.")
 		return false
 	_ensure_helpers()
 	if not _update_checker or _update_checker.is_request_active() or (_updater and _updater.is_busy()):
@@ -8573,7 +8573,7 @@ func _show_whats_new_after_update(recovery: Dictionary) -> void:
 	var settings := _get_editor_settings()
 	if not settings or str(settings.get_project_metadata(SETTINGS_SECTION, "whats_new_shown_version", "")) == version:
 		return
-	if not FileAccess.file_exists("res://addons/GDDraw/docs/whats-new.md"):
+	if not FileAccess.file_exists("res://addons/GDDrawPlus/docs/whats-new.md"):
 		return
 	_open_documentation("whats-new.md")
 	if _documentation_browser.visible and _documentation_browser.get_current_page_path() == "whats-new.md":
@@ -12809,7 +12809,7 @@ func _save_layered_project_to_path(path: String) -> bool:
 	_prepare_layer_operation()
 	var normalized_path := _normalize_layer_document_path(path)
 	if normalized_path.is_empty():
-		_set_status("Choose a .gddraw path inside res:// and outside res://addons/GDDraw.")
+		_set_status("Choose a .gddraw path inside res:// and outside res://addons/GDDrawPlus.")
 		return false
 	if _canvas:
 		_canvas.finish_text_draft(true)
@@ -16126,7 +16126,7 @@ func _apply_3d_preview_transform(reframe: bool) -> void:
 
 
 func _set_3d_paint_mesh_from_instance(source: MeshInstance3D, texture_image: Image) -> void:
-	var target_script = load("res://addons/GDDraw/gddraw_3d_surface_target.gd")
+	var target_script = load("res://addons/GDDrawPlus/gddraw_3d_surface_target.gd")
 	var surface_target = target_script.call("new") if target_script else null
 	if surface_target and surface_target.inspect(source).get("status", "error") == "ok":
 		surface_target.select_material(_texture_3d_session.material_slot if _texture_3d_session else 0)
@@ -18757,7 +18757,7 @@ func _save_png_to_path(path: String) -> void:
 func _save_2d_document_to_path(path: String) -> bool:
 	var normalized_path := _normalize_png_path(path)
 	if normalized_path.is_empty():
-		_set_status("Choose a PNG path inside res:// and outside res://addons/GDDraw.")
+		_set_status("Choose a PNG path inside res:// and outside res://addons/GDDrawPlus.")
 		return false
 
 	var save_dir := normalized_path.get_base_dir()
@@ -18850,7 +18850,7 @@ func _normalize_layer_document_path(path: String) -> String:
 		return ""
 	if normalized.get_extension().to_lower() != "gddraw":
 		normalized = normalized.get_basename() + ".gddraw"
-	if normalized.begins_with("res://addons/GDDraw/") or normalized == "res://addons/GDDraw.gddraw":
+	if normalized.begins_with("res://addons/GDDrawPlus/") or normalized == "res://addons/GDDrawPlus.gddraw":
 		return ""
 	return normalized
 
@@ -18885,7 +18885,7 @@ func _font_directory_dialog_path(path: String) -> String:
 func _set_default_save_dir(path: String) -> void:
 	var normalized_path := path.strip_edges()
 	if not _png_io.set_default_save_dir(_get_editor_settings(), normalized_path):
-		_set_status("Default save location must be inside res:// and outside res://addons/GDDraw.")
+		_set_status("Default save location must be inside res:// and outside res://addons/GDDrawPlus.")
 		return
 	if _save_location:
 		_save_location.text = normalized_path
@@ -18950,7 +18950,7 @@ func _apply_save_location(path: String) -> void:
 	if normalized_path.is_empty():
 		normalized_path = GDDrawPngIOHelper.DEFAULT_SAVE_DIR
 	if not StoragePaths.is_writable_project_path(normalized_path):
-		_set_status("Default save location must be inside res:// and outside res://addons/GDDraw.")
+		_set_status("Default save location must be inside res:// and outside res://addons/GDDrawPlus.")
 		if _save_location:
 			_save_location.text = _get_default_save_dir()
 		return

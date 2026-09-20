@@ -13,7 +13,7 @@ const STATUS := "status"
 const MESSAGE := "message"
 const STATUS_OK := "ok"
 const STATUS_ERROR := "error"
-const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
+const StoragePaths := preload("res://addons/GDDrawPlus/gddraw_storage_paths.gd")
 
 const DEFAULT_MARGIN := 0.01
 

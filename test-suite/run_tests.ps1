@@ -13,11 +13,11 @@
 
 .EXAMPLE
   .\run_tests.ps1
-  .\run_tests.ps1 -Godot "C:\path\to\Godot_v4.7-stable_win64_console.exe" -Addon "C:\some\addons\GDDraw"
+  .\run_tests.ps1 -Godot "C:\path\to\Godot_v4.7-stable_win64_console.exe" -Addon "C:\some\addons\GDDrawPlus"
 #>
 param(
     [string]$Godot = $env:GODOT_CONSOLE,
-    [string]$Addon = (Join-Path $PSScriptRoot "..\addons\GDDraw")
+    [string]$Addon = (Join-Path $PSScriptRoot "..\addons\GDDrawPlus")
 )
 
 # Godot prints harmless warnings to stderr at exit; they must not abort the script.
@@ -34,9 +34,9 @@ if (Test-Path $work) { [System.IO.Directory]::Delete($work, $true) }
 
 function New-TestProject([string]$dir, [string[]]$plugins) {
     [System.IO.Directory]::CreateDirectory("$dir\addons") | Out-Null
-    Copy-Item $Addon "$dir\addons\GDDraw" -Recurse
+    Copy-Item $Addon "$dir\addons\GDDrawPlus" -Recurse
     # keep the copy's update checker off the network
-    $checker = "$dir\addons\GDDraw\gddraw_update_checker.gd"
+    $checker = "$dir\addons\GDDrawPlus\gddraw_update_checker.gd"
     if (Test-Path $checker) {
         $text = [System.IO.File]::ReadAllText($checker).Replace("https://api.github.com/repos/ArdonyxApps/GDDraw/releases/latest", "http://127.0.0.1:9/none")
         [System.IO.File]::WriteAllText($checker, $text, $utf8)
@@ -70,7 +70,7 @@ foreach ($test in (Get-ChildItem "$unit\tests\test_*.gd" | Sort-Object Name)) {
 # ------------------------------------------------------------ editor tests
 function Run-EditorSuite([string]$name, [string]$driver, [string]$resultPrefix, [int]$quitAfter, [int]$waitSeconds) {
     $dir = "$work\editor_$driver"
-    New-TestProject $dir @("GDDraw", $driver)
+    New-TestProject $dir @("GDDrawPlus", $driver)
     Copy-Item "$PSScriptRoot\editor\$driver" "$dir\addons\$driver" -Recurse
     Write-Host "Importing $name project ..."
     & $Godot --headless --path $dir --editor --quit-after 300 *> $null
@@ -97,7 +97,7 @@ Run-EditorSuite "Scene stays small (placeholder textures swapped for imported PN
 Run-EditorSuite "Loading another model: Also paint check, create-missing dialog, material-follow ticks" "newmesh_driver" "NMTEST" 18000 560
 Run-EditorSuite "Meshes without a material (built-in shapes too): material + texture are created" "nomaterial_driver" "NOMTEST" 18000 520
 Run-EditorSuite "ORM materials: packed occlusion/roughness/metallic, height settings copied, all channels follow the material" "beehive_driver" "BHTEST" 20000 560
-Run-EditorSuite "GDDraw Plus release facts (name, version, updater off, notices)" "fork_driver" "FKTEST" 3000 200
+Run-EditorSuite "GDDrawPlus release facts (name, version, updater off, notices)" "fork_driver" "FKTEST" 3000 200
 
 # ------------------------------------------------------------ summary
 Write-Host ""

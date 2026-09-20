@@ -2,9 +2,9 @@
 class_name GDDraw3DLayerCoordinator
 extends RefCounted
 
-const LayerSession := preload("res://addons/GDDraw/gddraw_layer_session.gd")
-const TextureSession := preload("res://addons/GDDraw/gddraw_3d_texture_session.gd")
-const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
+const LayerSession := preload("res://addons/GDDrawPlus/gddraw_layer_session.gd")
+const TextureSession := preload("res://addons/GDDrawPlus/gddraw_3d_texture_session.gd")
+const StoragePaths := preload("res://addons/GDDrawPlus/gddraw_storage_paths.gd")
 
 const STATUS := "status"
 const MESSAGE := "message"

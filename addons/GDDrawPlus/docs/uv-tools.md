@@ -1,6 +1,6 @@
 # UV Tools
 
-GDDraw Plus adds a **UV** menu to GDDraw's menu bar. It creates and edits the UV layout of a mesh, so you can paint models that have no UVs or poor ones.
+GDDrawPlus adds a **UV** menu to GDDraw's menu bar. It creates and edits the UV layout of a mesh, so you can paint models that have no UVs or poor ones.
 
 ## Choose the mesh
 

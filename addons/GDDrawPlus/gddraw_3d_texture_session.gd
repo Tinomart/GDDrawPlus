@@ -16,9 +16,9 @@ const STATUS_NEEDS_CREATE := "needs_create"
 const STATUS_ERROR := "error"
 const CHANNEL_ALBEDO := "albedo"
 const DEFAULT_TEXTURE_SIZE := Vector2i(1024, 1024)
-const UV_OVERLAY_SCRIPT_PATH := "res://addons/GDDraw/gddraw_uv_overlay.gd"
-const SURFACE_TARGET_SCRIPT_PATH := "res://addons/GDDraw/gddraw_3d_surface_target.gd"
-const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
+const UV_OVERLAY_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_uv_overlay.gd"
+const SURFACE_TARGET_SCRIPT_PATH := "res://addons/GDDrawPlus/gddraw_3d_surface_target.gd"
+const StoragePaths := preload("res://addons/GDDrawPlus/gddraw_storage_paths.gd")
 
 var target
 var source_node: Node3D

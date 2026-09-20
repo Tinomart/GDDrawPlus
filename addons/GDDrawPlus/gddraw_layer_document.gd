@@ -2,7 +2,7 @@
 class_name GDDrawLayerDocument
 extends RefCounted
 
-const LayerSession := preload("res://addons/GDDraw/gddraw_layer_session.gd")
+const LayerSession := preload("res://addons/GDDrawPlus/gddraw_layer_session.gd")
 
 const FORMAT_NAME := "gddraw-layered-document"
 const FORMAT_VERSION := 2

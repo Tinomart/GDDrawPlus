@@ -2,7 +2,7 @@
 * text=auto eol=lf
 
 # Files left out of "git archive", GitHub's automatic "Source code" downloads and Godot Asset Library installs, so they
-# contain the addon plus LICENSE and .gitignore (the Godot Asset Library requires both in the archive; addons/GDDraw also carries its own LICENSE, THIRD_PARTY_NOTICES.md and manual).
+# contain the addon plus LICENSE and .gitignore (the Godot Asset Library requires both in the archive; addons/GDDrawPlus also carries its own LICENSE, THIRD_PARTY_NOTICES.md and manual).
 /README.md export-ignore
 /CHANGELOG.md export-ignore
 /THIRD_PARTY_NOTICES.md export-ignore

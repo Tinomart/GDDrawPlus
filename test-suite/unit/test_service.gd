@@ -102,5 +102,5 @@ func run() -> void:
 	var line_instance := MeshInstance3D.new()
 	line_instance.mesh = lines
 	check(service.unwrap_mesh_instance(line_instance, null).get("status") == "error", "line-only mesh -> error result")
-	var bad_dir := service.unwrap_mesh_instance(mesh_instance, null, 0.02, "res://addons/GDDraw/meshes")
+	var bad_dir := service.unwrap_mesh_instance(mesh_instance, null, 0.02, "res://addons/GDDrawPlus/meshes")
 	check(bad_dir.get("status") == "error", "refuses to write inside the plugin folder")

@@ -1,5 +1,5 @@
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "home": "index.md",
   "sections": [
     {
@@ -35,7 +35,7 @@
         {"title": "Saving and Files", "path": "saving-and-files.md", "description": "PNG export, layered projects, closing sessions, and project storage."},
         {"title": "Shortcuts", "path": "shortcuts.md", "description": "Keyboard and mouse reference."},
         {"title": "Troubleshooting", "path": "troubleshooting.md", "description": "Solutions for common 2D, layer, and 3D workflow questions."},
-        {"title": "Known Limitations", "path": "known-limitations.md", "description": "Current boundaries of GDDraw Plus 0.3.1."}
+        {"title": "Known Limitations", "path": "known-limitations.md", "description": "Current boundaries of GDDrawPlus 0.3.2."}
       ]
     }
   ]

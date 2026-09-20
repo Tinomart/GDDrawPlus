@@ -4,9 +4,9 @@ This page covers installation and the shortest paths to a first 2D drawing or 3D
 
 ## Installing the plugin
 
-1. Copy the `GDDraw` folder into `res://addons/GDDraw` in the Godot project.
+1. Copy the `GDDrawPlus` folder into your project's `res://addons/` folder, so it ends up as `res://addons/GDDrawPlus`. If the original GDDraw or GDDrawPlus 0.3.1 is installed (`res://addons/GDDraw`), delete that folder first: two copies cannot be enabled together.
 2. Open **Project > Project Settings > Plugins**.
-3. Enable **GDDraw**.
+3. Enable **GDDrawPlus**.
 4. Select the **GDDraw** bottom-panel tab.
 
 > **Screenshot placeholder:** Show Godot's Plugins settings with GDDraw enabled and the GDDraw bottom-panel tab visible below the main viewport.

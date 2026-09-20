@@ -1,10 +1,10 @@
 @tool
 extends EditorPlugin
 
-const DOCK_SCENE_PATH := "res://addons/GDDraw/gddraw_dock.tscn"
-const PLUGIN_VERSION := "0.3.1"
+const DOCK_SCENE_PATH := "res://addons/GDDrawPlus/gddraw_dock.tscn"
+const PLUGIN_VERSION := "0.3.2"
 const DOCK_META_KEY := "gddraw_bottom_panel_dock"
-const ADDON_PATH_PREFIX := "res://addons/GDDraw/"
+const ADDON_PATH_PREFIX := "res://addons/GDDrawPlus/"
 const MINIMUM_BOTTOM_PANEL_HEIGHT := 360.0
 
 var _dock: Control

@@ -24,8 +24,8 @@ const DOWNLOADS_DIR := UPDATE_ROOT + "/downloads"
 const STAGED_DIR := UPDATE_ROOT + "/staged"
 const BACKUPS_DIR := UPDATE_ROOT + "/backups"
 const TRANSACTION_PATH := UPDATE_ROOT + "/installation-transaction.json"
-const PLUGIN_ROOT := "res://addons/GDDraw"
-const PACKAGE_PREFIX := "addons/GDDraw/"
+const PLUGIN_ROOT := "res://addons/GDDrawPlus"
+const PACKAGE_PREFIX := "addons/GDDrawPlus/"
 const MAX_ARCHIVE_BYTES := 64 * 1024 * 1024
 const MAX_EXTRACTED_BYTES := 256 * 1024 * 1024
 const MAX_FILE_BYTES := 64 * 1024 * 1024
@@ -37,28 +37,28 @@ const REDIRECT_HOST_ALLOWLIST := [
 	"github-releases.githubusercontent.com",
 ]
 const REQUIRED_FILES := [
-	"addons/GDDraw/plugin.cfg",
-	"addons/GDDraw/GDDraw.gd",
-	"addons/GDDraw/gddraw_dock.gd",
-	"addons/GDDraw/gddraw_update_checker.gd",
-	"addons/GDDraw/gddraw_updater.gd",
-	"addons/GDDraw/gddraw_dock.tscn",
-	"addons/GDDraw/gddraw_canvas.gd",
-	"addons/GDDraw/gddraw_history.gd",
-	"addons/GDDraw/gddraw_layer_node.gd",
-	"addons/GDDraw/gddraw_paint_target.gd",
-	"addons/GDDraw/gddraw_layer_session.gd",
-	"addons/GDDraw/gddraw_layer_document.gd",
-	"addons/GDDraw/gddraw_png_io.gd",
-	"addons/GDDraw/gddraw_shortcuts.gd",
-	"addons/GDDraw/gddraw_storage_paths.gd",
-	"addons/GDDraw/gddraw_3d_surface_target.gd",
-	"addons/GDDraw/gddraw_3d_texture_session.gd",
-	"addons/GDDraw/gddraw_3d_layer_discovery.gd",
-	"addons/GDDraw/gddraw_3d_layer_coordinator.gd",
-	"addons/GDDraw/gddraw_mesh_paint_cache.gd",
-	"addons/GDDraw/gddraw_uv_overlay.gd",
-	"addons/GDDraw/editor_integration/gddraw_sprite_creator.gd",
+	"addons/GDDrawPlus/plugin.cfg",
+	"addons/GDDrawPlus/GDDraw.gd",
+	"addons/GDDrawPlus/gddraw_dock.gd",
+	"addons/GDDrawPlus/gddraw_update_checker.gd",
+	"addons/GDDrawPlus/gddraw_updater.gd",
+	"addons/GDDrawPlus/gddraw_dock.tscn",
+	"addons/GDDrawPlus/gddraw_canvas.gd",
+	"addons/GDDrawPlus/gddraw_history.gd",
+	"addons/GDDrawPlus/gddraw_layer_node.gd",
+	"addons/GDDrawPlus/gddraw_paint_target.gd",
+	"addons/GDDrawPlus/gddraw_layer_session.gd",
+	"addons/GDDrawPlus/gddraw_layer_document.gd",
+	"addons/GDDrawPlus/gddraw_png_io.gd",
+	"addons/GDDrawPlus/gddraw_shortcuts.gd",
+	"addons/GDDrawPlus/gddraw_storage_paths.gd",
+	"addons/GDDrawPlus/gddraw_3d_surface_target.gd",
+	"addons/GDDrawPlus/gddraw_3d_texture_session.gd",
+	"addons/GDDrawPlus/gddraw_3d_layer_discovery.gd",
+	"addons/GDDrawPlus/gddraw_3d_layer_coordinator.gd",
+	"addons/GDDrawPlus/gddraw_mesh_paint_cache.gd",
+	"addons/GDDrawPlus/gddraw_uv_overlay.gd",
+	"addons/GDDrawPlus/editor_integration/gddraw_sprite_creator.gd",
 ]
 const FORBIDDEN_NATIVE_EXTENSIONS := [
 	"dll", "so", "dylib", "exe", "com", "bat", "cmd", "ps1", "app", "msi", "dmg", "pkg",
@@ -147,7 +147,7 @@ func prepare_release(release_result: Dictionary, installed_version: String) -> b
 
 
 static func validate_release_descriptor(release_result: Dictionary, installed_version: String) -> Dictionary:
-	var checker = load("res://addons/GDDraw/gddraw_update_checker.gd")
+	var checker = load("res://addons/GDDrawPlus/gddraw_update_checker.gd")
 	if not checker:
 		return {"ok": false, "message": "The version checker is unavailable."}
 	var target := str(release_result.get("latest_version", ""))
@@ -378,15 +378,15 @@ func validate_and_stage_archive(archive_path: String, release: Dictionary, insta
 		if required not in files:
 			reader.close()
 			return {"ok": false, "message": "The update archive is missing %s." % required}
-	var plugin_text: String = reader.read_file("addons/GDDraw/GDDraw.gd").get_string_from_utf8()
-	var cfg_text: String = reader.read_file("addons/GDDraw/plugin.cfg").get_string_from_utf8()
+	var plugin_text: String = reader.read_file("addons/GDDrawPlus/GDDraw.gd").get_string_from_utf8()
+	var cfg_text: String = reader.read_file("addons/GDDrawPlus/plugin.cfg").get_string_from_utf8()
 	var package_version := parse_plugin_script_version(plugin_text)
 	var cfg_version := parse_plugin_cfg_version(cfg_text)
 	var target_version := str(release.get("target_version", ""))
 	if package_version != target_version or cfg_version != target_version:
 		reader.close()
 		return {"ok": false, "message": "The release tag, asset, PLUGIN_VERSION, and plugin.cfg version do not agree."}
-	var checker = load("res://addons/GDDraw/gddraw_update_checker.gd")
+	var checker = load("res://addons/GDDrawPlus/gddraw_update_checker.gd")
 	if not checker or not checker.is_newer_version(target_version, installed_version):
 		reader.close()
 		return {"ok": false, "message": "The package is not newer than the installed GDDraw version."}
@@ -432,7 +432,7 @@ func validate_and_stage_archive(archive_path: String, release: Dictionary, insta
 		"validation_timestamp": Time.get_datetime_string_from_system(true),
 		"updater_state": "ready_to_install",
 		"staging_dir": staging_dir,
-		"package_dir": package_dir.path_join("addons/GDDraw"),
+		"package_dir": package_dir.path_join("addons/GDDrawPlus"),
 	}
 	if not _write_json(staging_dir.path_join("manifest.json"), manifest):
 		_remove_tree_scoped(staging_dir, _staged_dir())
@@ -469,7 +469,7 @@ static func validate_archive_entry_path(path: String) -> Dictionary:
 		return {"ok": false, "message": "The update archive contains a malformed path."}
 	# ZIP tools commonly synthesize these two directory markers. They contain no
 	# data and extraction ignores every directory entry.
-	if path in ["addons/", "addons/GDDraw/"]:
+	if path in ["addons/", "addons/GDDrawPlus/"]:
 		return {"ok": true}
 	var trimmed := path.trim_suffix("/")
 	var components := trimmed.split("/", false)

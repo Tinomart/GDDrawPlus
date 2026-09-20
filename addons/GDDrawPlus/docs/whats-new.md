@@ -2,9 +2,13 @@
 
 New features, improvements, and fixes in GDDraw, with the latest version first. Scroll down for earlier releases.
 
-## 0.3.1 - GDDraw Plus
+## 0.3.2 - GDDrawPlus
 
-GDDraw Plus is a community fork of GDDraw 0.3.0. Everything in 0.3.0 is unchanged; these are the additions.
+The plugin is now called **GDDrawPlus**, and its folder is `addons/GDDrawPlus`. It no longer overwrites the original GDDraw when copied into a project. If `res://addons/GDDraw` (the original, or GDDrawPlus 0.3.1) is present, delete that folder before enabling GDDrawPlus, because both use the same class names and cannot be enabled together. There are no other changes.
+
+## 0.3.1 - GDDrawPlus
+
+GDDrawPlus is a community fork of GDDraw 0.3.0. Everything in 0.3.0 is unchanged; these are the additions.
 
 ### UV tools
 

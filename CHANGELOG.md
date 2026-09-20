@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.3.1 - GDDraw Plus
+## 0.3.2 - GDDrawPlus
+
+Changed
+- Renamed to GDDrawPlus. The addon folder is now `addons/GDDrawPlus` (it was `addons/GDDraw`), so it no longer overwrites the original GDDraw when copied into a project. Delete an existing `addons/GDDraw` before enabling it: both define the same class names and cannot be enabled together.
+
+## 0.3.1 - GDDrawPlus
 
 First release of the fork, based on GDDraw 0.3.0.
 

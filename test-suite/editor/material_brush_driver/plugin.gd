@@ -97,7 +97,7 @@ func _run() -> void:
 		return
 	check(material_button.get_parent() == brush_button.get_parent() and material_button.get_index() == brush_button.get_index() + 1, "the button sits in the left tool rail, directly under the Brush")
 	check(str(material_button.get_meta("inactive_icon_name")) == "material-brush_0.svg" and str(material_button.get_meta("active_icon_name")) == "material-brush_1.svg", "it has its own icon")
-	check(ResourceLoader.exists("res://addons/GDDraw/icons/material-brush/material-brush_0.svg") or FileAccess.file_exists("res://addons/GDDraw/icons/material-brush/material-brush_0.svg"), "the icon file ships with the addon")
+	check(ResourceLoader.exists("res://addons/GDDrawPlus/icons/material-brush/material-brush_0.svg") or FileAccess.file_exists("res://addons/GDDrawPlus/icons/material-brush/material-brush_0.svg"), "the icon file ships with the addon")
 	check(options.get_parent() == dock.find_child("Tool Options Bar", true, false), "the options live in the tool options bar")
 	check(not options.visible and not material_button.button_pressed and not canvas.material_pixel_source.is_valid(), "off by default: options hidden, canvas hook not set")
 

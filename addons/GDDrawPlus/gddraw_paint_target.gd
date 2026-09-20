@@ -2,7 +2,7 @@
 class_name GDDrawPaintTarget
 extends RefCounted
 
-const LayerNode := preload("res://addons/GDDraw/gddraw_layer_node.gd")
+const LayerNode := preload("res://addons/GDDrawPlus/gddraw_layer_node.gd")
 const MAX_LAYER_DIMENSION := 16384
 
 var target_id := ""

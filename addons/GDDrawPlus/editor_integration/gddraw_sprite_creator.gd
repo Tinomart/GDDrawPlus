@@ -2,7 +2,7 @@
 class_name GDDrawSpriteCreatorHelper
 extends RefCounted
 
-const StoragePaths := preload("res://addons/GDDraw/gddraw_storage_paths.gd")
+const StoragePaths := preload("res://addons/GDDrawPlus/gddraw_storage_paths.gd")
 
 enum CSGShape {
 	BOX,
@@ -220,7 +220,7 @@ func _validate_csg_context(image: Image, texture_dir: String, options: Dictionar
 		return _make_result(false, "Draw or load visible pixels, or disable Assign Current Image.")
 	var normalized_dir := StoragePaths.normalize_path(texture_dir)
 	if not StoragePaths.is_writable_project_path(normalized_dir):
-		return _make_result(false, "The configured save location must be inside res:// and outside res://addons/GDDraw.")
+		return _make_result(false, "The configured save location must be inside res:// and outside res://addons/GDDrawPlus.")
 	return _make_result(true, "Ready to create textured %s." % _SHAPE_CONFIGS[shape]["class_name"])
 
 

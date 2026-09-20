@@ -2,8 +2,8 @@
 class_name GDDrawDocumentationBrowser
 extends AcceptDialog
 
-const DEFAULT_MANIFEST_PATH := "res://addons/GDDraw/docs/navigation.json"
-const DOCUMENTATION_ROOT := "res://addons/GDDraw/docs/"
+const DEFAULT_MANIFEST_PATH := "res://addons/GDDrawPlus/docs/navigation.json"
+const DOCUMENTATION_ROOT := "res://addons/GDDrawPlus/docs/"
 const ACCENT_COLOR := "#6EA7E8"
 const MUTED_COLOR := "#A7ADB5"
 const CODE_COLOR := "#D7BA7D"

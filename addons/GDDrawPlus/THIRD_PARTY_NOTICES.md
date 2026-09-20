@@ -14,7 +14,7 @@ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH RE
 
 ## Gator Model Studio
 
-The UV tools in addons/GDDraw/uv/ (UV editor, unwrap methods, topology and background-job helpers) are derived from Gator Model Studio. Each derived file carries a header saying so, and the license is also kept next to the code in addons/GDDraw/uv/LICENSE-GatorModelStudio.txt.
+The UV tools in addons/GDDrawPlus/uv/ (UV editor, unwrap methods, topology and background-job helpers) are derived from Gator Model Studio. Each derived file carries a header saying so, and the license is also kept next to the code in addons/GDDrawPlus/uv/LICENSE-GatorModelStudio.txt.
 
 MIT License
 

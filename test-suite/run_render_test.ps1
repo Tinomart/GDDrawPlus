@@ -14,7 +14,7 @@
 #>
 param(
     [string]$Godot = $env:GODOT_CONSOLE,
-    [string]$Addon = (Join-Path $PSScriptRoot "..\addons\GDDraw")
+    [string]$Addon = (Join-Path $PSScriptRoot "..\addons\GDDrawPlus")
 )
 # Godot console executable: -Godot, else the GODOT_CONSOLE environment variable, else a godot*console* on PATH.
 if (-not $Godot) { $found = Get-Command "godot*console*" -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { $Godot = $found.Source } }

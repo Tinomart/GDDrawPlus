@@ -1,6 +1,6 @@
 # Known Limitations
 
-This page describes the intended boundaries of GDDraw Plus 0.3.1 rather than unfinished behavior that should silently fail.
+This page describes the intended boundaries of GDDrawPlus 0.3.2 rather than unfinished behavior that should silently fail.
 
 ## 3D materials and channels
 
