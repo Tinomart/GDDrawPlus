@@ -3,6 +3,8 @@ extends Node
 
 signal check_completed(result: Dictionary)
 
+# GDDraw Plus: in-editor updates are switched off (UPDATES_ENABLED in gddraw_dock.gd) because these four URLs name the
+# ORIGINAL GDDraw releases. To enable updates for a fork, point them at the fork's releases (and keep the asset name below).
 const RELEASE_API_URL := "https://api.github.com/repos/ArdonyxApps/GDDraw/releases/latest"
 const RELEASE_PAGE_URL := "https://github.com/ArdonyxApps/GDDraw/releases/latest"
 const RELEASE_TAG_URL_PREFIX := "https://github.com/ArdonyxApps/GDDraw/releases/tag/"

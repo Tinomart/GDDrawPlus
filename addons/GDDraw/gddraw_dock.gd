@@ -326,6 +326,10 @@ const DOCUMENTATION_BROWSER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_documenta
 const DOCUMENTATION_MANIFEST_PATH := "res://addons/GDDraw/docs/navigation.json"
 const MESH_PAINT_CACHE_SCRIPT_PATH := "res://addons/GDDraw/gddraw_mesh_paint_cache.gd"
 const SPRITE_CREATOR_SCRIPT_PATH := "res://addons/GDDraw/editor_integration/gddraw_sprite_creator.gd"
+## GDDraw Plus does not update itself: the built-in updater below is wired to the ORIGINAL GDDraw releases, and installing one
+## would replace this fork with the original (removing UV tools, the Material Brush, ...). A maintainer who publishes releases
+## for the fork can point the URLs in gddraw_update_checker.gd at them and switch this on.
+const UPDATES_ENABLED := false
 const UPDATE_CHECKER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_update_checker.gd"
 const UPDATER_SCRIPT_PATH := "res://addons/GDDraw/gddraw_updater.gd"
 const GDDrawUpdater := preload("res://addons/GDDraw/gddraw_updater.gd")
@@ -1788,7 +1792,7 @@ func _build_ui() -> void:
 	_select_tool(GDDrawCanvasControl.ToolMode.BRUSH)
 	_record_recent_color(Color.BLACK)
 	call_deferred("_connect_window_file_drop")
-	if Engine.is_editor_hint() and _plugin:
+	if UPDATES_ENABLED and Engine.is_editor_hint() and _plugin:
 		call_deferred("_check_for_updates", true)
 
 
@@ -1980,7 +1984,7 @@ func _populate_help_menu(show_update := false) -> void:
 	_help_menu.add_separator()
 	_help_menu.add_item("Check for Updates...", MenuCommand.HELP_CHECK_UPDATES)
 	_help_menu.add_separator()
-	_help_menu.add_item("About GDDraw", MenuCommand.HELP_ABOUT)
+	_help_menu.add_item("About GDDraw Plus", MenuCommand.HELP_ABOUT)
 
 
 func _build_help_update_badge() -> void:
@@ -2185,10 +2189,10 @@ func _on_menu_command(command_id: int) -> void:
 			_show_update_available_overlay()
 		MenuCommand.HELP_ABOUT:
 			_show_help_dialog(
-				"About GDDraw",
-				"GDDraw v%s\n\n" % _get_installed_plugin_version()
+				"About GDDraw Plus",
+				"GDDraw Plus v%s (based on GDDraw 0.3.0 by ArdonyxApps)\n\n" % _get_installed_plugin_version()
 				+ "Overview:\n"
-				+ "GDDraw is a Godot 4.4+ editor plugin for quick pixel-art and texture-painting work inside the editor.\n\n"
+				+ "GDDraw Plus is a community fork of GDDraw, a Godot editor plugin for quick pixel-art and texture-painting work inside the editor. It adds UV unwrapping and a UV editor, paint channels (roughness, metallic, ambient occlusion, height, normal, emission) and a Material Brush that paints with PBR materials.\n\n"
 				+ "Use it for:\n"
 				+ "Use it to sketch prototype sprites, make small PNG edits, block out texture ideas, and paint albedo textures directly on supported 3D meshes or CSG surfaces. It is built for fast iteration without leaving Godot, with save prompts around the places where scene or texture data can change."
 			)
@@ -8048,7 +8052,7 @@ func _build_scale_image_dialog() -> void:
 	fields.add_theme_constant_override("h_separation", 12)
 	fields.add_theme_constant_override("v_separation", 8)
 	content.add_child(fields)
-	_scale_width =_add_scale_dimension_field(fields, "Width")
+	_scale_width = _add_scale_dimension_field(fields, "Width")
 	_scale_height = _add_scale_dimension_field(fields, "Height")
 	var preserve_label := Label.new()
 	preserve_label.text = "Preserve Aspect"
@@ -8187,6 +8191,10 @@ func _build_update_available_overlay() -> void:
 
 
 func _check_for_updates(automatic := false) -> bool:
+	if not UPDATES_ENABLED:
+		if not automatic:
+			_show_update_error_overlay("GDDraw Plus does not update itself. Download new versions from the project's releases page and replace addons/GDDraw.")
+		return false
 	_ensure_helpers()
 	if not _update_checker or _update_checker.is_request_active() or (_updater and _updater.is_busy()):
 		return false
