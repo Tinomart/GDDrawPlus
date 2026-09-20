@@ -21,6 +21,9 @@ var material: StandardMaterial3D
 var geometry_signature := ""
 var preview_surface_slots := PackedInt32Array()
 var _skeleton_pose_dirty := false
+# Which material texture slot this target paints (see GDDrawMaterialChannels); albedo by default.
+var channel := "albedo"
+var _choice_channel := "albedo"
 
 
 static func from_node(node: Node) -> GDDraw3DSurfaceTarget:
@@ -123,11 +126,15 @@ func get_material_for_slot(slot: int) -> Material:
 	return mesh_instance.get_active_material(slot)
 
 
-func discover_material_slots() -> Array[Dictionary]:
+func discover_material_slots(paint_channel := "albedo") -> Array[Dictionary]:
 	var choices: Array[Dictionary] = []
+	_choice_channel = paint_channel if GDDrawMaterialChannels.has_channel(paint_channel) else GDDrawMaterialChannels.ALBEDO
 	if not mesh_snapshot:
 		return choices
 	if is_csg:
+		# Generated CSG meshes only have their single albedo material.
+		if _choice_channel != GDDrawMaterialChannels.ALBEDO:
+			return choices
 		var configuration_error := _get_csg_configuration_error()
 		var candidate := get_material_for_slot(0)
 		choices.push_back(_make_choice(0, "CSG Material", candidate, configuration_error, candidate == null))
@@ -135,14 +142,21 @@ func discover_material_slots() -> Array[Dictionary]:
 	var mesh_instance := source_node as MeshInstance3D
 	var surface_count := source_mesh.get_surface_count() if source_mesh else mesh_snapshot.get_surface_count()
 	if surface_count == 0:
+		if _choice_channel != GDDrawMaterialChannels.ALBEDO:
+			return choices
 		choices.push_back(_make_choice(-1, "Material Override", mesh_instance.material_override, "", false))
 		return choices
 	for slot in range(surface_count):
 		var slot_name := "Material %d" % slot
-		var surface_name: String = source_mesh.surface_get_name(slot) if source_mesh else mesh_snapshot.surface_get_name(slot)
+		var surface_name: String = (
+			(source_mesh as ArrayMesh).surface_get_name(slot) if source_mesh is ArrayMesh
+			else ("" if source_mesh else mesh_snapshot.surface_get_name(slot))
+		)
 		if not surface_name.is_empty():
 			slot_name += " (%s)" % surface_name
-		choices.push_back(_make_choice(slot, slot_name, mesh_instance.get_active_material(slot), "", false))
+		# A surface without any material is fine: GDDraw creates a StandardMaterial3D and texture for it.
+		var slot_material := mesh_instance.get_active_material(slot)
+		choices.push_back(_make_choice(slot, slot_name, slot_material, "", slot_material == null))
 	return choices
 
 
@@ -157,10 +171,11 @@ func select_material(slot: int) -> Dictionary:
 		return _result(STATUS_OK, "")
 	if candidate:
 		return _result(STATUS_ERROR, "GDDraw supports StandardMaterial3D albedo textures for 3D painting.")
-	if is_csg:
+	if is_csg or slot >= 0:
+		# No material yet: the session offers to create one (assign_new_material_and_texture).
 		material = null
 		return _result(STATUS_OK, "")
-	return _result(STATUS_ERROR, "This mesh slot has no material. Assign a StandardMaterial3D in the Inspector first.")
+	return _result(STATUS_ERROR, "This mesh has no material slot. Assign a StandardMaterial3D in the Inspector first.")
 
 
 func validate_geometry(slot := -2) -> Dictionary:
@@ -232,25 +247,40 @@ func assign_texture(editor_plugin: EditorPlugin, next_texture: Texture2D) -> boo
 				mesh_instance.set_surface_override_material(material_slot, override_material)
 				assigned_override = mesh_instance.get_surface_override_material(material_slot) as StandardMaterial3D
 			material = assigned_override
-			return material != null and material.albedo_texture == next_texture
+			return material != null and _get_channel_texture(material) == next_texture
 		var active_material := mesh_instance.get_active_material(material_slot) as StandardMaterial3D
 		if active_material:
+			var slot_needs_new_texture := _needs_dedicated_texture(active_material)
 			var override_material := active_material.duplicate(true) as StandardMaterial3D
 			if not override_material:
 				return false
 			override_material.resource_name = "%s GDDraw Surface %d" % [mesh_instance.name, material_slot]
 			override_material.resource_local_to_scene = true
-			override_material.albedo_texture = next_texture
+			_apply_channel_changes(override_material, next_texture, slot_needs_new_texture)
 			if not _assign_mesh_surface_material(editor_plugin, existing_override, override_material):
 				return false
 			material = mesh_instance.get_surface_override_material(material_slot) as StandardMaterial3D
-			return material != null and material.albedo_texture == next_texture
+			return material != null and _get_channel_texture(material) == next_texture
 	return _assign_material_texture(editor_plugin, material, next_texture)
 
 
 func assign_new_material_and_texture(editor_plugin: EditorPlugin, next_texture: Texture2D) -> bool:
-	if not is_csg or not next_texture or not is_instance_valid(source_node):
+	if not next_texture or not is_instance_valid(source_node):
 		return false
+	if not is_csg:
+		# A mesh surface without a material gets a new StandardMaterial3D as a surface override (undoable);
+		# the mesh resource itself is not touched.
+		var mesh_instance := source_node as MeshInstance3D
+		if not mesh_instance or not mesh_instance.mesh or material_slot < 0 or material_slot >= mesh_instance.mesh.get_surface_count():
+			return false
+		var created := StandardMaterial3D.new()
+		created.resource_name = "%s GDDraw Surface %d" % [mesh_instance.name, material_slot]
+		created.resource_local_to_scene = true
+		_apply_channel_changes(created, next_texture, true)
+		if not _assign_mesh_surface_material(editor_plugin, mesh_instance.get_surface_override_material(material_slot), created):
+			return false
+		material = mesh_instance.get_surface_override_material(material_slot) as StandardMaterial3D
+		return material != null and _get_channel_texture(material) == next_texture
 	var previous := get_material_for_slot(0)
 	var replacement := StandardMaterial3D.new()
 	replacement.resource_name = "%s GDDraw Material" % source_node.name
@@ -327,6 +357,13 @@ func _make_mesh_snapshot(mesh_instance: MeshInstance3D) -> Mesh:
 	if not source_mesh:
 		_skeleton_pose_dirty = false
 		return null
+	if source_mesh is PrimitiveMesh:
+		# Godot's built-in shapes (CylinderMesh, SphereMesh, BoxMesh, ...) are generated, and only an ArrayMesh
+		# can be asked for its surface details, so GDDraw works on an ArrayMesh copy of the shape.
+		_skeleton_pose_dirty = false
+		var converted := ArrayMesh.new()
+		converted.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, (source_mesh as PrimitiveMesh).get_mesh_arrays())
+		return converted
 	if not _has_skeleton_pose_data(mesh_instance):
 		_skeleton_pose_dirty = false
 		return source_mesh
@@ -547,6 +584,8 @@ func _make_choice(slot: int, slot_name: String, candidate: Material, configurati
 			false,
 			""
 		)
+	if _choice_channel != GDDrawMaterialChannels.ALBEDO:
+		return GDDrawMaterialChannels.build_choice(_choice_channel, slot, slot_name, candidate as StandardMaterial3D, self)
 	var standard := candidate as StandardMaterial3D
 	var path := get_editable_texture_path(standard.albedo_texture)
 	var missing := standard.albedo_texture == null
@@ -569,7 +608,7 @@ func _choice(slot: int, label: String, supported: bool, reason: String, missing_
 	return {
 		"slot": slot,
 		"label": label,
-		"channel": "albedo",
+		"channel": _choice_channel,
 		"supported": supported,
 		"reason": reason,
 		"missing_texture": missing_texture,
@@ -610,19 +649,49 @@ func _assign_mesh_surface_material(editor_plugin: EditorPlugin, previous: Materi
 	return mesh_instance.get_surface_override_material(material_slot) == next
 
 
+func _get_channel_texture(target_material: Material) -> Texture2D:
+	return GDDrawMaterialChannels.read_texture(target_material, channel)
+
+
+# What to set on the material when `next_texture` is assigned to this target's channel. Swapping the
+# texture of a slot that already has its own editable texture (Save As, resize) changes only the
+# texture. A brand-new dedicated texture (empty or packed slot) also sets the switches that make it
+# effective and bakes the material's multiplier into the pixels (see GDDrawMaterialChannels).
+func _channel_changes_for(target_material: Material, next_texture: Texture2D, force_new_texture := false) -> Array[Dictionary]:
+	if not force_new_texture and (channel == GDDrawMaterialChannels.ALBEDO or GDDrawMaterialChannels.get_editable_texture(target_material, channel) != null):
+		var swap: Array[Dictionary] = [{"property": GDDrawMaterialChannels.texture_property(channel), "value": next_texture}]
+		return swap
+	return GDDrawMaterialChannels.property_changes_for_new_texture(channel, next_texture)
+
+
+# True when the slot has no texture of its own to swap (empty, or packed with other channels). Decided
+# on the ORIGINAL material, because a duplicated copy may no longer show the texture sharing.
+func _needs_dedicated_texture(source_material: Material) -> bool:
+	return channel != GDDrawMaterialChannels.ALBEDO and GDDrawMaterialChannels.get_editable_texture(source_material, channel) == null
+
+
+func _apply_channel_changes(target_material: Material, next_texture: Texture2D, force_new_texture := false) -> void:
+	for change in _channel_changes_for(target_material, next_texture, force_new_texture):
+		target_material.set(str(change["property"]), change["value"])
+
+
 func _assign_material_texture(editor_plugin: EditorPlugin, target_material: StandardMaterial3D, next_texture: Texture2D) -> bool:
-	var previous_texture := target_material.albedo_texture
+	var changes := _channel_changes_for(target_material, next_texture)
 	var undo_redo := editor_plugin.get_undo_redo() if editor_plugin else null
 	if undo_redo:
-		undo_redo.create_action("Assign GDDraw Albedo Texture")
-		undo_redo.add_do_property(target_material, "albedo_texture", next_texture)
-		undo_redo.add_undo_property(target_material, "albedo_texture", previous_texture)
+		undo_redo.create_action("Assign GDDraw %s Texture" % GDDrawMaterialChannels.label(channel))
+		for change in changes:
+			var property_name := str(change["property"])
+			undo_redo.add_do_property(target_material, property_name, change["value"])
+			undo_redo.add_undo_property(target_material, property_name, target_material.get(property_name))
 		undo_redo.commit_action()
 	else:
-		target_material.albedo_texture = next_texture
-	if target_material.albedo_texture != next_texture:
-		target_material.albedo_texture = next_texture
-	return target_material.albedo_texture == next_texture
+		for change in changes:
+			target_material.set(str(change["property"]), change["value"])
+	if _get_channel_texture(target_material) != next_texture:
+		for change in changes:
+			target_material.set(str(change["property"]), change["value"])
+	return _get_channel_texture(target_material) == next_texture
 
 
 func _texture_has_readable_image(source_texture: Texture2D) -> bool:

@@ -452,6 +452,25 @@ const TARGET_CONTEXT_REVEAL_TEXTURE := 304
 const TARGET_CONTEXT_SELECT_MATERIAL := 305
 const DEFAULT_FONT_DIRECTORY_KEY := "default_font_directory"
 const CHECKER_LIGHT_KEY := "checker_light"
+const MATERIAL_BRUSH_RECENT_KEY := "material_brush_recent"
+const MATERIAL_BRUSH_SCALE_KEY := "material_brush_scale"
+const MATERIAL_BRUSH_ROTATION_KEY := "material_brush_rotation"
+const MATERIAL_BRUSH_RECENT_LIMIT := 8
+## The largest brush the size box accepts (it was 96; big brushes are now drawn natively, see the canvas).
+const MAX_BRUSH_SIZE := 512
+const VISIBLE_PIXELS_SCAN_MAX_PIXELS := 1048576
+const MATERIAL_BRUSH_COMPANIONS_KEY := "material_brush_companions"
+## Materials created with the Material Brush's New button live here; edits made to them in the Inspector are saved automatically.
+const MATERIAL_BRUSH_MATERIAL_DIR := "res://gddraw/materials"
+const MATERIAL_MENU_NEW := 1
+const MATERIAL_MENU_OPEN := 2
+const MATERIAL_MENU_EDIT := 3
+const MATERIAL_MENU_NEW_SHADER := 4
+const MATERIAL_MENU_RENAME := 5
+const MATERIAL_MENU_DELETE := 6
+const MATERIAL_MENU_FLIP_GREEN := 7
+const MATERIAL_BRUSH_BAKE_SIZE_KEY := "material_brush_bake_size_v2"
+const MATERIAL_MENU_RECENT_BASE := 100
 const CHECKER_DARK_KEY := "checker_dark"
 const DEFAULT_CHECKER_LIGHT_COLOR := Color(0.68, 0.68, 0.68, 1.0)
 const DEFAULT_CHECKER_DARK_COLOR := Color(0.48, 0.48, 0.48, 1.0)
@@ -496,10 +515,11 @@ const NAVIGATION_3D_NONE := 0
 const NAVIGATION_3D_ORBIT := 1
 const NAVIGATION_3D_PAN := 2
 const NAVIGATION_3D_FREELOOK := 3
-const CANVAS_RESIZE_LOCK_TOOLTIP := "Canvas resizing is disabled to protect the active mesh texture."
-const CANVAS_RESIZE_LOCK_STATUS := "Canvas resizing is disabled while a 3D texture session is active."
-const CROP_LOCK_TOOLTIP := "Cropping is unavailable while a 3D texture session is active."
+const CANVAS_RESIZE_LOCK_TOOLTIP := "Canvas resizing is disabled to protect the active mesh texture (it would shift pixels against the UVs). Use Image > Scale Textures… to change the resolution."
+const CANVAS_RESIZE_LOCK_STATUS := "Canvas resizing is disabled while a 3D texture session is active. Use Image > Scale Textures… to change the resolution."
+const CROP_LOCK_TOOLTIP := "Cropping is unavailable while a 3D texture session is active (it would shift pixels against the UVs). Use Image > Scale Textures… to change the resolution."
 const CROP_LOCK_STATUS := "Cropping is unavailable while a 3D texture session is active."
+const SCALE_3D_TOOLTIP := "Resample every texture of the active 3D object to a new resolution. The UV mapping stays valid; undo is supported."
 const SCALE_LOCK_TOOLTIP := "Image scaling is unavailable while a 3D texture session is active."
 const SCALE_LOCK_STATUS := "Image scaling is unavailable while a 3D texture session is active."
 enum MenuCommand {
@@ -786,6 +806,45 @@ var _line_button: Button
 var _rectangle_button: Button
 var _ellipse_button: Button
 var _eyedropper_button: Button
+# Material Brush: paints the active channel with a material's texture (see GDDrawMaterialSet).
+var _material_button: Button
+var _material_options: HBoxContainer
+var _material_menu: MenuButton
+var _material_poll_timer: Timer
+var _placeholder_texture_timer: Timer
+var _material_signature := ""
+## A ShaderMaterial the brush paints with is baked into images (GDDrawShaderBaker) and re-baked when it changes.
+var _material_shader: ShaderMaterial
+var _material_shader_path := ""
+var _material_shader_signature := ""
+var _material_baking := false
+var _material_bake_size := GDDrawShaderBaker.DEFAULT_SIZE
+var _material_size_menu: PopupMenu
+var _material_scale: SpinBox
+var _material_rotation: SpinBox
+var _material_info: Label
+var _material_dialog: FileDialog
+var _material_rename_dialog: ConfirmationDialog
+var _material_rename_edit: LineEdit
+var _material_delete_dialog: ConfirmationDialog
+var _material_set: GDDrawMaterialSet
+var _material_brush_active := false
+var _material_brush_selecting := false
+var _material_recent := PackedStringArray()
+var _material_rotation_cs := Vector2(1.0, 0.0)
+var _material_companion_button: MenuButton
+var _material_companion_channels := PackedStringArray()
+# Coverage of the current Material Brush stroke (pixel index -> painted alpha), in document pixels of the
+# active paint target. Replayed onto the companion channels when the stroke is committed.
+var _material_stroke_mask := {}
+var _material_stroke_bounds := Rect2i()
+var _material_stroke_size := Vector2i.ZERO
+## Coverage of this stroke painted by the native path, accumulated stamp by stamp in an image of the canvas size
+## (alpha = coverage) and used to paint the companion channels when the stroke is committed.
+var _material_mask_image: Image
+var _material_mask_bounds := Rect2i()
+## Prepared material tiles by key (a few at a time: the painted channel and its companions).
+var _material_tiles := {}
 var _selection_mode_button: Button
 var _selection_button: Button
 var _lasso_selection_button: Button
@@ -903,6 +962,12 @@ var _default_canvas_height: SpinBox
 var _zoom_label: Label
 var _zoom_3d_label: Label
 var _view_mode_selector: OptionButton
+# Which material texture slot the 3D painter edits (see GDDrawMaterialChannels). Chosen in the toolbar.
+var _channel_selector: OptionButton
+var _paint_channel := "albedo"
+var _channel_selector_updating := false
+var _last_constrained_channel := "albedo"
+var _last_3d_import_roots: Array[Node] = []
 var _linked_view_toggle: Button
 var _zoom_3d_in_button: Button
 var _zoom_3d_out_button: Button
@@ -1015,6 +1080,7 @@ var _crop_y: SpinBox
 var _crop_width: SpinBox
 var _crop_height: SpinBox
 var _scale_image_dialog: ConfirmationDialog
+var _scale_description_label: Label
 var _scale_width: SpinBox
 var _scale_height: SpinBox
 var _scale_preserve_aspect: CheckBox
@@ -1691,6 +1757,7 @@ func _build_ui() -> void:
 
 	_build_open_dialog()
 	_build_custom_fill_image_dialog()
+	_build_material_dialog()
 	_build_text_font_dialog()
 	_build_save_dialog()
 	_build_save_layered_dialog()
@@ -2221,11 +2288,15 @@ func _sync_menu_state() -> void:
 	_set_menu_item_disabled(_edit_menu, MenuCommand.EDIT_CUT, not has_selection)
 	_set_menu_item_disabled(_edit_menu, MenuCommand.EDIT_COPY, not has_selection)
 	_set_menu_item_disabled(_edit_menu, MenuCommand.EDIT_PASTE, not _has_paste_available())
-	_set_menu_item_disabled(_image_menu, MenuCommand.IMAGE_SCALE, has_active_texture)
+	# Scaling keeps the UV mapping intact (UVs are 0..1), so it stays available for 3D textures and
+	# resizes every texture of the active object. Canvas resize / crop / trim move pixels relative to the UVs.
+	var can_scale_3d_textures: bool = has_active_texture and _layer_session != null and _layer_session.get_active_target() != null
+	_set_menu_item_disabled(_image_menu, MenuCommand.IMAGE_SCALE, has_active_texture and not can_scale_3d_textures)
 	_set_menu_item_disabled(_image_menu, MenuCommand.IMAGE_RESIZE_CANVAS, has_active_texture)
 	_set_menu_item_disabled(_image_menu, MenuCommand.IMAGE_CROP_RECTANGLE, has_active_texture)
 	_set_menu_item_disabled(_image_menu, MenuCommand.IMAGE_TRIM_TRANSPARENT, has_active_texture)
-	_set_menu_item_tooltip(_image_menu, MenuCommand.IMAGE_SCALE, SCALE_LOCK_TOOLTIP if has_active_texture else "Resample the image to exact pixel dimensions.")
+	_set_menu_item_text(_image_menu, MenuCommand.IMAGE_SCALE, "Scale Textures…" if can_scale_3d_textures else "Scale Image…")
+	_set_menu_item_tooltip(_image_menu, MenuCommand.IMAGE_SCALE, SCALE_3D_TOOLTIP if can_scale_3d_textures else (SCALE_LOCK_TOOLTIP if has_active_texture else "Resample the image to exact pixel dimensions."))
 	_set_menu_item_tooltip(_image_menu, MenuCommand.IMAGE_RESIZE_CANVAS, CANVAS_RESIZE_LOCK_TOOLTIP if has_active_texture else "Change the canvas bounds with optional pixel preservation.")
 	_set_menu_item_tooltip(_image_menu, MenuCommand.IMAGE_CROP_RECTANGLE, CROP_LOCK_TOOLTIP if has_active_texture else "Preview and apply an exact crop rectangle.")
 	_set_menu_item_tooltip(_image_menu, MenuCommand.IMAGE_TRIM_TRANSPARENT, CROP_LOCK_TOOLTIP if has_active_texture else "Remove fully transparent outer rows and columns.")
@@ -2401,6 +2472,10 @@ func _build_tool_rail(parent: Container) -> void:
 	_brush_button.toggled.connect(_on_brush_toggled)
 	tool_rail.add_child(_brush_button)
 
+	_material_button = _make_icon_button("material-brush_0.svg", "Material Brush: paint with the texture of a material (Material Maker set or StandardMaterial3D)", true)
+	_material_button.toggled.connect(_on_material_brush_toggled)
+	tool_rail.add_child(_material_button)
+
 	_eraser_button = _make_icon_button("eraser_0.svg", "Eraser", true)
 	_eraser_button.toggled.connect(_on_eraser_toggled)
 	tool_rail.add_child(_eraser_button)
@@ -2429,11 +2504,27 @@ func _build_tool_rail(parent: Container) -> void:
 
 
 func _build_options_bar() -> void:
+	# The bar is a row: a horizontally scrolling area (tool options, paint channel) that takes whatever
+	# width is left, then the view controls pinned at the right so the 2D/3D selector is never pushed out.
+	var options_row := HBoxContainer.new()
+	options_row.name = "Tool Options Row"
+	options_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	options_row.add_theme_constant_override("separation", 6)
+	_workspace_content.add_child(options_row)
+
+	var options_scroll := ScrollContainer.new()
+	options_scroll.name = "Tool Options Scroll"
+	options_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	options_scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	options_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	options_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	options_row.add_child(options_scroll)
+
 	var options_bar := HBoxContainer.new()
 	options_bar.name = "Tool Options Bar"
 	options_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	options_bar.add_theme_constant_override("separation", 6)
-	_workspace_content.add_child(options_bar)
+	options_scroll.add_child(options_bar)
 
 	var options_corner := Control.new()
 	options_corner.name = "Tool Options Corner"
@@ -2500,7 +2591,7 @@ func _build_options_bar() -> void:
 
 	_brush_size = SpinBox.new()
 	_brush_size.min_value = 1
-	_brush_size.max_value = 96
+	_brush_size.max_value = MAX_BRUSH_SIZE
 	_brush_size.step = 1
 	_brush_size.value = 12
 	_brush_size.suffix = " px"
@@ -2798,6 +2889,8 @@ func _build_options_bar() -> void:
 	settings_actions.add_child(use_settings)
 	_update_fill_settings_button()
 
+	_build_material_options(options_bar)
+
 	_shape_options = HBoxContainer.new()
 	_shape_options.add_theme_constant_override("separation", TOOLBAR_SEPARATION)
 	options_bar.add_child(_shape_options)
@@ -3040,6 +3133,18 @@ func _build_options_bar() -> void:
 
 	_view_controls_separator = _add_tool_options_separator(options_bar, "View Controls Separator")
 
+	_channel_selector = OptionButton.new()
+	_channel_selector.name = "Paint Channel Selector"
+	for channel_id in GDDrawMaterialChannels.ids():
+		_channel_selector.add_item(GDDrawMaterialChannels.label(channel_id))
+	_channel_selector.custom_minimum_size.x = 110
+	_channel_selector.clip_text = true
+	_channel_selector.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_channel_selector.tooltip_text = "Which material texture the 3D painter edits: Albedo, Emission, Roughness, Metallic, Ambient Occlusion, Height or Normal. Changing it while a 3D session is open reopens the same objects in that channel."
+	_channel_selector.item_selected.connect(_on_channel_selected)
+	_channel_selector.visible = false
+	options_bar.add_child(_channel_selector)
+
 	_view_mode_selector = OptionButton.new()
 	_view_mode_selector.name = "View Mode Selector"
 	_view_mode_selector.add_item("2D", 0)
@@ -3049,16 +3154,16 @@ func _build_options_bar() -> void:
 	_view_mode_selector.custom_minimum_size.x = 120
 	_view_mode_selector.tooltip_text = "Choose the 2D, 3D, or Split View layout"
 	_view_mode_selector.item_selected.connect(_on_view_mode_selected)
-	options_bar.add_child(_view_mode_selector)
+	options_row.add_child(_view_mode_selector)
 
-	_view_link_separator = _add_tool_options_separator(options_bar, "View Link Separator")
+	_view_link_separator = _add_tool_options_separator(options_row, "View Link Separator")
 
 	_linked_view_toggle = _make_icon_button("unlink_0.svg", "Link 2D and 3D hover previews", true, "link_1.svg")
 	_linked_view_toggle.set_pressed_no_signal(_linked_view_enabled)
 	_update_toggle_button_icon(_linked_view_toggle)
 	_update_linked_view_tooltip()
 	_linked_view_toggle.toggled.connect(_on_linked_view_toggled)
-	options_bar.add_child(_linked_view_toggle)
+	options_row.add_child(_linked_view_toggle)
 
 
 func _build_layer_workspace(parent: Container) -> void:
@@ -7934,14 +8039,16 @@ func _build_scale_image_dialog() -> void:
 	var description := Label.new()
 	description.text = "Resample the image to exact pixel dimensions."
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.custom_minimum_size = Vector2(372.0, 0.0)
 	content.add_child(description)
+	_scale_description_label = description
 	var fields := GridContainer.new()
 	fields.columns = 2
 	fields.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fields.add_theme_constant_override("h_separation", 12)
 	fields.add_theme_constant_override("v_separation", 8)
 	content.add_child(fields)
-	_scale_width = _add_scale_dimension_field(fields, "Width")
+	_scale_width =_add_scale_dimension_field(fields, "Width")
 	_scale_height = _add_scale_dimension_field(fields, "Height")
 	var preserve_label := Label.new()
 	preserve_label.text = "Preserve Aspect"
@@ -8741,9 +8848,11 @@ func _update_3d_session_status(image: Image = null) -> void:
 
 
 func _is_active_3d_paint_session_dirty(image: Image = null) -> bool:
-	var layered_dirty := _is_layered_session_save_required()
+	# The layered-project check hashes every layer of every target (about 0.15 s per 2048x2048 image), so it only
+	# runs when no texture is already known to be unsaved; right after a stroke one always is.
 	if _texture_3d_layer_coordinator:
-		return _texture_3d_layer_coordinator.is_dirty(image) or layered_dirty
+		return _texture_3d_layer_coordinator.is_dirty(image) or _is_layered_session_save_required()
+	var layered_dirty := _is_layered_session_save_required()
 	if not _texture_3d_session or not _texture_3d_session.has_active_session():
 		return layered_dirty if _layer_session and _layer_session.session_kind == "3d" else false
 	var current_image := image if image else _get_canvas_output_image()
@@ -8879,6 +8988,7 @@ func _update_3d_context_control_visibility() -> void:
 		)
 	if _empty_3d_relink_button:
 		_empty_3d_relink_button.visible = has_detached_document
+	_sync_channel_selector_from_session()
 	_sync_menu_state()
 
 
@@ -9614,7 +9724,96 @@ func _on_swap_colors_pressed() -> void:
 	_set_background_color(foreground)
 
 
+func _get_effective_paint_channel() -> String:
+	if _texture_3d_session and _texture_3d_session.has_active_session():
+		return str(_texture_3d_session.channel)
+	return GDDrawMaterialChannels.ALBEDO
+
+
+func _on_channel_selected(index: int) -> void:
+	if _channel_selector_updating:
+		return
+	var channel_ids := GDDrawMaterialChannels.ids()
+	if index < 0 or index >= channel_ids.size() or channel_ids[index] == _paint_channel:
+		return
+	var previous_channel := _paint_channel
+	_paint_channel = channel_ids[index]
+	var channel_label := GDDrawMaterialChannels.label(_paint_channel)
+	if not (_texture_3d_session and _texture_3d_session.has_active_session()):
+		_apply_channel_brush_constraint()
+		_material_notice("The next 3D texture session paints %s. Choose Godot > Use Selected 3D Object." % channel_label)
+		return
+	# An open session belongs to one channel. Reopen the same objects in the new channel through
+	# the normal session-switch path, which asks what to do with unsaved textures.
+	var roots := _get_3d_channel_switch_roots()
+	if roots.is_empty():
+		_paint_channel = previous_channel
+		_sync_channel_selector_from_session()
+		_material_notice("Select the objects again with Use Selected 3D Object to paint a different channel.", 1)
+		return
+	var discovery_helper = _make_script_instance(LAYER_3D_DISCOVERY_SCRIPT_PATH, RefCounted.new())
+	var scope := (
+		GDDraw3DLayerDiscovery.Scope.EXPLICIT_SELECTION
+		if roots.size() > 1
+		else GDDraw3DLayerDiscovery.Scope.SELECTED_HIERARCHY
+	)
+	var discovery: Dictionary = discovery_helper.discover(roots, scope, _paint_channel)
+	if str(discovery.get("status", "error")) != "ok":
+		_paint_channel = previous_channel
+		_sync_channel_selector_from_session()
+		_material_notice(str(discovery.get("message", "These objects have no %s texture that GDDraw can paint." % channel_label.to_lower())), 1)
+		return
+	_begin_3d_layer_session(discovery)
+	_sync_channel_selector_from_session()
+
+
+# The objects the current 3D session was opened from: the last import selection, or (for a session
+# restored from a .gddraw file) the scene nodes its paint targets are bound to.
+func _get_3d_channel_switch_roots() -> Array[Node]:
+	var roots: Array[Node] = []
+	for root in _last_3d_import_roots:
+		if is_instance_valid(root) and root.is_inside_tree():
+			roots.push_back(root)
+	if not roots.is_empty() or not _texture_3d_layer_coordinator:
+		return roots
+	for target_id in _texture_3d_layer_coordinator.target_members:
+		for member in _texture_3d_layer_coordinator.target_members.get(target_id, []):
+			var source_node = member.get("descriptor", {}).get("source_node", null)
+			if is_instance_valid(source_node) and source_node is Node and (source_node as Node).is_inside_tree() and not roots.has(source_node):
+				roots.push_back(source_node)
+	return roots
+
+
+func _sync_channel_selector_from_session() -> void:
+	if _texture_3d_session and _texture_3d_session.has_active_session():
+		_paint_channel = str(_texture_3d_session.channel)
+	if _channel_selector:
+		_channel_selector.visible = _canvas_mode_3d
+		var index := GDDrawMaterialChannels.ids().find(_paint_channel)
+		if index >= 0 and _channel_selector.selected != index:
+			_channel_selector_updating = true
+			_channel_selector.select(index)
+			_channel_selector_updating = false
+	_apply_channel_brush_constraint()
+	_update_material_brush_info()
+
+
+# When the painted channel changes to a scalar one, bring the current brush colour to gray.
+func _apply_channel_brush_constraint() -> void:
+	var effective_channel := _get_effective_paint_channel()
+	if effective_channel == _last_constrained_channel:
+		return
+	_last_constrained_channel = effective_channel
+	if _canvas and GDDrawMaterialChannels.is_scalar(effective_channel):
+		_set_foreground_color(_canvas.brush_color)
+
+
 func _set_foreground_color(color: Color, synchronize_picker := true) -> void:
+	# Roughness, metallic, ambient occlusion and height are single values, painted as gray.
+	var constrained_color := GDDrawMaterialChannels.constrain_color(color, _get_effective_paint_channel())
+	if constrained_color != color:
+		color = constrained_color
+		synchronize_picker = true
 	if synchronize_picker and _foreground_color_picker:
 		_foreground_color_picker.set_block_signals(true)
 		_foreground_color_picker.color = color
@@ -9716,7 +9915,7 @@ func _normalize_custom_brush_preset(preset: Dictionary) -> Dictionary:
 		return {}
 	return {
 		"name": preset_name,
-		"size": _parse_bounded_int(str(preset.get("size", 1)), 1, 96, 1),
+		"size": _parse_bounded_int(str(preset.get("size", 1)), 1, MAX_BRUSH_SIZE, 1),
 		"head": clampi(int(preset.get("head", GDDrawCanvasControl.BrushHead.SQUARE)), GDDrawCanvasControl.BrushHead.SQUARE, GDDrawCanvasControl.BrushHead.CIRCLE),
 		"pixel": bool(preset.get("pixel", true)),
 		"touch": bool(preset.get("touch", true)),
@@ -9810,7 +10009,7 @@ func _apply_brush_preset(preset: Dictionary, preset_name: String) -> void:
 	if not _canvas:
 		return
 	_applying_brush_preset = true
-	var size_value := _parse_bounded_int(str(preset.get("size", 1)), 1, 96, 1)
+	var size_value := _parse_bounded_int(str(preset.get("size", 1)), 1, MAX_BRUSH_SIZE, 1)
 	var head_value := int(preset.get("head", GDDrawCanvasControl.BrushHead.SQUARE))
 	var touch_enabled := bool(preset.get("touch", true))
 	var pixel_enabled := bool(preset.get("pixel", true))
@@ -11167,8 +11366,38 @@ func _refresh_canvas_visible_pixels_state() -> void:
 	_canvas_has_visible_pixels = _canvas != null and _canvas.has_visible_pixels()
 
 
-func _on_stroke_committed(previous_image: Image) -> void:
+var _visible_pixels_timer: Timer
+
+
+## Whether the canvas has visible pixels only enables the Create Sprite2D menu entry, but finding out means
+## scanning the whole canvas (a third of a second at 4096x4096), which made every stroke end with a stall.
+## Big canvases are therefore assumed visible after a brush stroke and checked exactly once painting pauses.
+func _refresh_canvas_visible_pixels_state_after_stroke() -> void:
+	if _canvas == null:
+		_canvas_has_visible_pixels = false
+		return
+	var canvas_size: Vector2i = _canvas.get_canvas_size()
+	if canvas_size.x * canvas_size.y <= VISIBLE_PIXELS_SCAN_MAX_PIXELS:
+		_refresh_canvas_visible_pixels_state()
+		return
+	if _canvas.active_tool == GDDrawCanvasControl.ToolMode.BRUSH:
+		_canvas_has_visible_pixels = true
+	if _visible_pixels_timer == null:
+		_visible_pixels_timer = Timer.new()
+		_visible_pixels_timer.one_shot = true
+		_visible_pixels_timer.wait_time = 0.8
+		_visible_pixels_timer.timeout.connect(_on_visible_pixels_timer_timeout)
+		add_child(_visible_pixels_timer)
+	_visible_pixels_timer.start()
+
+
+func _on_visible_pixels_timer_timeout() -> void:
 	_refresh_canvas_visible_pixels_state()
+	_sync_menu_state()
+
+
+func _on_stroke_committed(previous_image: Image) -> void:
+	_refresh_canvas_visible_pixels_state_after_stroke()
 	if not _dropped_layer_import_context.is_empty():
 		_update_selection_action_buttons()
 		_sync_3d_paint_texture()
@@ -11176,6 +11405,7 @@ func _on_stroke_committed(previous_image: Image) -> void:
 		return
 	_push_undo(previous_image)
 	_history.clear_redo()
+	_stamp_material_companions()
 	_update_history_buttons()
 	_update_selection_action_buttons()
 	_sync_3d_paint_texture()
@@ -11184,7 +11414,26 @@ func _on_stroke_committed(previous_image: Image) -> void:
 		var target = _layer_session.get_active_target()
 		if target:
 			_invalidate_layer_thumbnail(target.target_id, target.selected_layer_id)
-	_refresh_layers_tree()
+	_refresh_layers_tree_after_stroke()
+
+
+var _layers_tree_refresh_timer: Timer
+
+
+## Rebuilding the layer thumbnails downscales every changed layer (about 0.1 s for a 4096x4096 layer), which
+## made each stroke end with a stall. Big canvases refresh the panel once painting pauses instead.
+func _refresh_layers_tree_after_stroke() -> void:
+	var canvas_size: Vector2i = _canvas.get_canvas_size() if _canvas else Vector2i.ONE
+	if canvas_size.x * canvas_size.y <= VISIBLE_PIXELS_SCAN_MAX_PIXELS:
+		_refresh_layers_tree()
+		return
+	if _layers_tree_refresh_timer == null:
+		_layers_tree_refresh_timer = Timer.new()
+		_layers_tree_refresh_timer.one_shot = true
+		_layers_tree_refresh_timer.wait_time = 0.4
+		_layers_tree_refresh_timer.timeout.connect(_refresh_layers_tree)
+		add_child(_layers_tree_refresh_timer)
+	_layers_tree_refresh_timer.start()
 
 
 func _on_canvas_image_changed(image: Image) -> void:
@@ -12024,11 +12273,34 @@ func _reject_locked_scale() -> bool:
 
 
 func _start_scale_image() -> void:
-	if not _canvas or not _scale_image_dialog or _reject_locked_scale():
+	if not _canvas or not _scale_image_dialog:
+		return
+	if _is_canvas_resize_locked():
+		# A 3D texture session: rescale all textures of the active object (UVs are unaffected by scaling).
+		var texture_ids := _get_active_object_texture_ids()
+		if texture_ids.is_empty():
+			_reject_locked_scale()
+			return
+		_start_context_texture_scale(texture_ids)
 		return
 	_scale_context_target_ids.clear()
 	_scale_context_allows_3d = false
 	_open_scale_image_dialog(_canvas.get_canvas_size(), "Scale Image")
+
+
+# Paint targets (textures) that belong to the object of the active target, active target first.
+func _get_active_object_texture_ids() -> PackedStringArray:
+	var ids := PackedStringArray()
+	var active = _layer_session.get_active_target() if _layer_session else null
+	if not active:
+		return ids
+	ids.push_back(active.target_id)
+	var group: Dictionary = _layer_session.get_object_group(str(active.owner_group_id))
+	for target_id_value in group.get("target_ids", PackedStringArray()):
+		var target_id := str(target_id_value)
+		if not target_id.is_empty() and not ids.has(target_id) and _layer_session.get_target(target_id):
+			ids.push_back(target_id)
+	return ids
 
 
 func _start_context_texture_scale(target_ids: PackedStringArray) -> void:
@@ -12056,7 +12328,17 @@ func _open_scale_image_dialog(source_size: Vector2i, dialog_title: String) -> vo
 	_scale_width.set_value_no_signal(_scale_source_size.x)
 	_scale_height.set_value_no_signal(_scale_source_size.y)
 	_scale_preserve_aspect.set_pressed_no_signal(true)
-	_scale_interpolation.select(0)
+	# Texture scaling is mostly used to shrink, where averaging (bilinear) looks far better than picking pixels.
+	_scale_interpolation.select(1 if _scale_context_allows_3d else 0)
+	if _scale_description_label:
+		if _scale_context_allows_3d:
+			_scale_description_label.text = (
+				"Resample this texture to exact pixel dimensions. The UV mapping stays valid."
+				if _scale_context_target_ids.size() == 1
+				else "Resample all %d textures of this object (albedo and any other channels) to exact pixel dimensions. The UV mapping stays valid." % _scale_context_target_ids.size()
+			)
+		else:
+			_scale_description_label.text = "Resample the image to exact pixel dimensions."
 	_syncing_scale_controls = false
 	_scale_workflow_active = true
 	_scale_image_dialog.title = dialog_title
@@ -12153,11 +12435,16 @@ func _apply_scale_image() -> void:
 		_layer_session.restore_state(previous_state)
 		_sync_canvas_to_active_layer()
 		_set_status("Texture scaling was canceled because one target could not use that size.")
+		if _scale_context_allows_3d:
+			_material_notice("Nothing was resized: a texture has a locked layer or cannot use that size. Unlock its layers and try again.", 1)
 	elif changed_count > 0:
 		_push_layer_session_state_undo(previous_state)
 		_sync_canvas_to_active_layer()
 		if _scale_context_allows_3d:
 			_sync_3d_paint_view(true)
+			_material_tiles.clear()
+			_material_mask_image = null
+			_material_notice("Resized %d texture(s) to %dx%d. Save the textures to write the new size to disk (Undo restores the old size)." % [changed_count, new_size.x, new_size.y], 0)
 		_set_status(
 			"Resized %d texture(s) to %sx%s." % [changed_count, new_size.x, new_size.y]
 			if _scale_context_allows_3d
@@ -12165,6 +12452,8 @@ func _apply_scale_image() -> void:
 		)
 	else:
 		_set_status("Image scaling did not change the canvas.")
+		if _scale_context_allows_3d:
+			_material_notice("The textures already have that size.", 0)
 	_scale_context_target_ids.clear()
 	_scale_context_allows_3d = false
 	_update_selection_action_buttons()
@@ -13354,8 +13643,18 @@ func _refresh_3d_scope_picker() -> void:
 		if _session_picker_roots.size() > 1
 		else GDDraw3DLayerDiscovery.Scope.SELECTED_HIERARCHY
 	)
-	_session_picker_layer_discovery = discovery_helper.discover(_session_picker_roots, scope)
+	_session_picker_layer_discovery = discovery_helper.discover(_session_picker_roots, scope, _paint_channel)
 	_rebuild_3d_session_picker_tree()
+	if str(_session_picker_layer_discovery.get("status", "error")) != "ok":
+		# The status label GDDraw writes to is not shown anywhere, so say why nothing can be painted.
+		var reasons := PackedStringArray()
+		for issue in _session_picker_layer_discovery.get("issues", []):
+			if issue is Dictionary and reasons.size() < 3:
+				reasons.push_back("%s: %s" % [str(issue.get("label", "object")), str(issue.get("reason", ""))])
+		_material_notice(
+			"%s%s" % [str(_session_picker_layer_discovery.get("message", "Nothing to paint here.")), (" " + " / ".join(reasons)) if not reasons.is_empty() else ""],
+			1
+		)
 
 
 func _open_3d_session_picker(surface_target: Node3D) -> void:
@@ -13629,6 +13928,7 @@ func _confirm_3d_session_picker() -> void:
 	if discovery.is_empty():
 		_update_3d_session_picker_selection_state()
 		return
+	_last_3d_import_roots.assign(_session_picker_roots)
 	if _request_2d_to_3d_layer_transition(discovery):
 		return
 	_begin_3d_layer_session(discovery)
@@ -13858,6 +14158,7 @@ func _cancel_pending_session_transition() -> void:
 		return
 	_clear_pending_session_transition()
 	_set_status("Kept the active 3D texture session unchanged.")
+	_sync_channel_selector_from_session()
 
 
 func _continue_pending_session_transition() -> void:
@@ -13938,6 +14239,7 @@ func _begin_3d_layer_session(discovery: Dictionary, create_missing := false, ski
 	if discovery.is_empty() or str(discovery.get("status", "error")) != "ok":
 		_set_status("The selected 3D import scope is no longer valid.")
 		return
+	discovery = _add_material_companions(discovery)
 	if (
 		not create_missing
 		and not skip_guard
@@ -14081,6 +14383,8 @@ func _finish_3d_layer_import(coordinator, discovery: Dictionary, result: Diction
 	_update_3d_session_status()
 	_sync_menu_state()
 	_set_status(str(result.get("message", "Opened the selected 3D paint targets.")))
+	_apply_material_settings_to_session.call_deferred()
+	_check_material_companions_after_load.call_deferred()
 
 
 func _begin_3d_texture_session(surface_target: Node3D, create_if_missing := false, skip_guard := false, material_slot := 0) -> void:
@@ -14216,6 +14520,8 @@ func _cancel_missing_3d_texture() -> void:
 		_session_picker_dialog.call_deferred("popup_centered", Vector2i(720, 500))
 	_update_3d_context_control_visibility()
 	_set_status("Texture creation canceled; no material or texture was changed.")
+	if _material_wants_companions():
+		_material_notice("Texture creation canceled: the missing Also paint textures do not exist, so those channels are not painted on the new objects.", 1)
 
 
 func _stop_3d_texture_session() -> void:
@@ -14748,6 +15054,35 @@ func _try_start_resource_filesystem_scan() -> bool:
 func _request_resource_filesystem_scan(wait_frames := RESOURCE_FILESYSTEM_SCAN_DELAY_FRAMES) -> void:
 	_resource_filesystem_scan_pending = true
 	_resource_filesystem_scan_wait_frames = maxi(_resource_filesystem_scan_wait_frames, wait_frames)
+
+
+# New GDDraw textures start as in-memory ImageTextures; once Godot has imported their PNG, the material gets the
+# real file, so a saved scene references the PNG instead of embedding gigabytes of pixel text.
+func _swap_placeholder_textures(force := false) -> void:
+	var sessions: Array = []
+	if _texture_3d_layer_coordinator:
+		sessions = _texture_3d_layer_coordinator.texture_sessions.values()
+	elif _texture_3d_session:
+		sessions = [_texture_3d_session]
+	if sessions.is_empty():
+		return
+	if _texture_save_stage != TextureSaveStage.IDLE or _batch_texture_save_stage != BatchTextureSaveStage.IDLE:
+		return
+	if not force:
+		var filesystem: Object = _get_resource_filesystem()
+		if filesystem and (
+			(filesystem.has_method("is_scanning") and bool(filesystem.call("is_scanning")))
+			or (filesystem.has_method("is_importing") and bool(filesystem.call("is_importing")))
+		):
+			return
+	for texture_session in sessions:
+		if texture_session and texture_session.has_method("swap_placeholder_for_imported_texture"):
+			texture_session.swap_placeholder_for_imported_texture()
+
+
+# Called by the plugin right before a scene is saved.
+func flush_placeholder_textures() -> void:
+	_swap_placeholder_textures(true)
 
 
 func _advance_resource_filesystem_scan() -> void:
@@ -19050,7 +19385,1208 @@ func _shortcut_is_scoped_to_gddraw_legacy() -> bool:
 	return Rect2(global_position, size).has_point(mouse_position)
 
 
+func _build_material_options(options_bar: Container) -> void:
+	_material_options = HBoxContainer.new()
+	_material_options.name = "Material Brush Options"
+	_material_options.add_theme_constant_override("separation", 6)
+	_material_options.visible = false
+	options_bar.add_child(_material_options)
+
+	_material_menu = MenuButton.new()
+	_material_menu.name = "Material Menu"
+	_material_menu.text = "Choose material ▾"
+	_material_menu.custom_minimum_size.x = 160
+	_material_menu.clip_text = true
+	_material_menu.tooltip_text = "What the brush paints with. Create a new material, open a StandardMaterial3D or a texture set, edit the current material in the Inspector, or pick a recent one."
+	_material_menu.about_to_popup.connect(_rebuild_material_menu)
+	_material_menu.get_popup().id_pressed.connect(_on_material_menu_id_pressed)
+	_material_size_menu = PopupMenu.new()
+	_material_size_menu.name = "ShaderBakeSize"
+	for bake_size in GDDrawShaderBaker.SIZES:
+		_material_size_menu.add_radio_check_item("%d px" % bake_size, bake_size)
+	_material_size_menu.id_pressed.connect(_on_material_bake_size_selected)
+	_material_menu.get_popup().add_child(_material_size_menu)
+	_material_options.add_child(_material_menu)
+	_rebuild_material_menu()
+	_material_poll_timer = Timer.new()
+	_material_poll_timer.name = "Material Change Watcher"
+	_material_poll_timer.wait_time = 0.5
+	_material_poll_timer.timeout.connect(_poll_material_brush_material)
+	add_child(_material_poll_timer)
+	_placeholder_texture_timer = Timer.new()
+	_placeholder_texture_timer.name = "Placeholder Texture Swapper"
+	_placeholder_texture_timer.wait_time = 2.0
+	_placeholder_texture_timer.autostart = true
+	_placeholder_texture_timer.timeout.connect(_swap_placeholder_textures)
+	add_child(_placeholder_texture_timer)
+	var scale_label := Label.new()
+	scale_label.text = "Scale"
+	_material_options.add_child(scale_label)
+	_material_scale = SpinBox.new()
+	_material_scale.name = "Material Scale"
+	_material_scale.min_value = 0.05
+	_material_scale.max_value = 256.0
+	_material_scale.step = 0.05
+	_material_scale.value = 1.0
+	_material_scale.suffix = "×"
+	_material_scale.custom_minimum_size.x = 84
+	_material_scale.tooltip_text = "How many times the material repeats across the texture (UV 0-1)."
+	_apply_preferences_spinbox_style(_material_scale)
+	_material_scale.value_changed.connect(_on_material_transform_changed)
+	_material_options.add_child(_material_scale)
+
+	var rotation_label := Label.new()
+	rotation_label.text = "Rotate"
+	_material_options.add_child(rotation_label)
+	_material_rotation = SpinBox.new()
+	_material_rotation.name = "Material Rotation"
+	_material_rotation.min_value = -180.0
+	_material_rotation.max_value = 180.0
+	_material_rotation.step = 1.0
+	_material_rotation.value = 0.0
+	_material_rotation.suffix = "°"
+	_material_rotation.custom_minimum_size.x = 76
+	_material_rotation.tooltip_text = "Rotates the material pattern."
+	_apply_preferences_spinbox_style(_material_rotation)
+	_material_rotation.value_changed.connect(_on_material_transform_changed)
+	_material_options.add_child(_material_rotation)
+
+	_material_companion_button = MenuButton.new()
+	_material_companion_button.name = "Material Companion Channels"
+	_material_companion_button.text = "Also paint"
+	_material_companion_button.tooltip_text = "In a 3D session, also paint the ticked channels in the same stroke: GDDraw opens those textures together with the one you are painting, and each takes the matching map of the material. Channels the material does not have are skipped."
+	var companion_popup := _material_companion_button.get_popup()
+	companion_popup.hide_on_checkable_item_selection = false
+	var companion_ids := GDDrawMaterialChannels.ids()
+	for companion_index in range(companion_ids.size()):
+		companion_popup.add_check_item(GDDrawMaterialChannels.label(companion_ids[companion_index]), companion_index)
+	companion_popup.id_pressed.connect(_on_material_companion_toggled)
+	_material_options.add_child(_material_companion_button)
+
+	_material_info = Label.new()
+	_material_info.name = "Material Info"
+	_material_info.visible = false
+	_material_options.add_child(_material_info)
+	# The material controls come first: with the brush options in front they were scrolled out of sight.
+	options_bar.move_child(_material_options, _brush_options.get_index())
+	_load_material_brush_preferences()
+
+
+func _build_material_dialog() -> void:
+	_material_dialog = FileDialog.new()
+	_material_dialog.access = FileDialog.ACCESS_RESOURCES
+	_material_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_material_dialog.filters = PackedStringArray([
+		"*.tres, *.res, *.material ; Materials (StandardMaterial3D or ShaderMaterial)",
+		"*.gdshader ; Shaders",
+		"*.png, *.jpg, *.jpeg, *.webp, *.bmp, *.tga, *.exr, *.hdr, *.svg ; Texture set images",
+	])
+	_material_dialog.title = "Choose a Material for the Material Brush"
+	_material_dialog.file_selected.connect(_load_material_brush_material)
+	add_child(_material_dialog)
+
+	_material_rename_dialog = ConfirmationDialog.new()
+	_material_rename_dialog.title = "Rename Material"
+	_material_rename_dialog.ok_button_text = "Rename"
+	var rename_box := VBoxContainer.new()
+	var rename_label := Label.new()
+	rename_label.text = "New name (the file stays in its folder):"
+	rename_box.add_child(rename_label)
+	_material_rename_edit = LineEdit.new()
+	_material_rename_edit.custom_minimum_size.x = 320
+	rename_box.add_child(_material_rename_edit)
+	_material_rename_dialog.add_child(rename_box)
+	_material_rename_dialog.confirmed.connect(_on_material_rename_confirmed)
+	_material_rename_edit.text_submitted.connect(func(_text): _material_rename_dialog.hide(); _on_material_rename_confirmed())
+	add_child(_material_rename_dialog)
+
+	_material_delete_dialog = ConfirmationDialog.new()
+	_material_delete_dialog.title = "Delete Material"
+	_material_delete_dialog.ok_button_text = "Move to Trash"
+	_material_delete_dialog.confirmed.connect(_delete_material_brush_material)
+	add_child(_material_delete_dialog)
+
+func _load_material_brush_preferences() -> void:
+	var editor_settings := _get_editor_settings()
+	if not editor_settings:
+		return
+	_material_recent = PackedStringArray()
+	for path in str(editor_settings.get_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_RECENT_KEY, "")).split("|", false):
+		if _material_recent.size() < MATERIAL_BRUSH_RECENT_LIMIT:
+			_material_recent.push_back(path)
+	_material_scale.set_value_no_signal(clampf(float(editor_settings.get_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_SCALE_KEY, 1.0)), 0.05, 256.0))
+	_material_rotation.set_value_no_signal(clampf(float(editor_settings.get_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_ROTATION_KEY, 0.0)), -180.0, 180.0))
+	_material_companion_channels = PackedStringArray()
+	for channel_id in str(editor_settings.get_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_COMPANIONS_KEY, "")).split("|", false):
+		if GDDrawMaterialChannels.has_channel(channel_id) and not _material_companion_channels.has(channel_id):
+			_material_companion_channels.push_back(channel_id)
+	var stored_size := int(editor_settings.get_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_BAKE_SIZE_KEY, GDDrawShaderBaker.DEFAULT_SIZE))
+	_material_bake_size = stored_size if stored_size in GDDrawShaderBaker.SIZES else GDDrawShaderBaker.DEFAULT_SIZE
+	_update_material_transform()
+	_refresh_material_recent_picker()
+	_refresh_material_companion_menu()
+
+
+func _save_material_brush_preferences() -> void:
+	var editor_settings := _get_editor_settings()
+	if not editor_settings:
+		return
+	editor_settings.set_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_RECENT_KEY, "|".join(_material_recent))
+	editor_settings.set_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_SCALE_KEY, _material_scale.value)
+	editor_settings.set_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_ROTATION_KEY, _material_rotation.value)
+	editor_settings.set_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_COMPANIONS_KEY, "|".join(_material_companion_channels))
+	editor_settings.set_project_metadata(SETTINGS_SECTION, MATERIAL_BRUSH_BAKE_SIZE_KEY, _material_bake_size)
+
+
+func _rebuild_material_menu() -> void:
+	if not _material_menu:
+		return
+	var popup := _material_menu.get_popup()
+	popup.clear()
+	popup.add_item("New Material (edit it in the Inspector)", MATERIAL_MENU_NEW)
+	popup.add_item("New Shader Material (procedural, edit the shader)", MATERIAL_MENU_NEW_SHADER)
+	popup.add_item("Open Material or Texture Set…", MATERIAL_MENU_OPEN)
+	popup.add_item("Edit Current Material in the Inspector", MATERIAL_MENU_EDIT)
+	popup.set_item_disabled(popup.get_item_index(MATERIAL_MENU_EDIT), _material_editable_resource() == null)
+	popup.add_item("Rename Current Material…", MATERIAL_MENU_RENAME)
+	popup.add_item("Delete Current Material…", MATERIAL_MENU_DELETE)
+	var has_material_file := _material_file_path() != ""
+	popup.set_item_disabled(popup.get_item_index(MATERIAL_MENU_RENAME), not has_material_file)
+	popup.set_item_disabled(popup.get_item_index(MATERIAL_MENU_DELETE), not has_material_file)
+	popup.add_check_item("Flip Normal Green (DirectX normal maps)", MATERIAL_MENU_FLIP_GREEN)
+	var flip_index := popup.get_item_index(MATERIAL_MENU_FLIP_GREEN)
+	popup.set_item_disabled(flip_index, _material_set == null or not _material_set.has_texture("normal"))
+	popup.set_item_checked(flip_index, _material_set != null and _material_set.flip_normal_green)
+	if _material_size_menu:
+		for size_index in range(_material_size_menu.item_count):
+			_material_size_menu.set_item_checked(size_index, _material_size_menu.get_item_id(size_index) == _material_bake_size)
+		popup.add_submenu_node_item("Shader Bake Size", _material_size_menu)
+	if not _material_recent.is_empty():
+		popup.add_separator("Recent")
+		for index in range(_material_recent.size()):
+			popup.add_item(GDDrawMaterialSet.name_for_path(_material_recent[index]), MATERIAL_MENU_RECENT_BASE + index)
+			popup.set_item_tooltip(popup.item_count - 1, _material_recent[index])
+	var menu_name := GDDrawMaterialSet.name_for_path(_material_shader_path) if _material_shader != null else (_material_set.display_name if _material_set != null else "")
+	_material_menu.text = "%s ▾" % menu_name if menu_name != "" else "Choose material ▾"
+
+
+func _refresh_material_recent_picker() -> void:
+	_rebuild_material_menu()
+
+
+func _on_material_menu_id_pressed(id: int) -> void:
+	match id:
+		MATERIAL_MENU_NEW:
+			_create_new_material_brush_material()
+		MATERIAL_MENU_NEW_SHADER:
+			_create_new_shader_material()
+		MATERIAL_MENU_RENAME:
+			_ask_rename_material_brush_material()
+		MATERIAL_MENU_DELETE:
+			_ask_delete_material_brush_material()
+		MATERIAL_MENU_FLIP_GREEN:
+			_toggle_material_normal_flip()
+		MATERIAL_MENU_OPEN:
+			_browse_material_brush_material()
+		MATERIAL_MENU_EDIT:
+			_edit_material_brush_material_in_inspector()
+		_:
+			var index := id - MATERIAL_MENU_RECENT_BASE
+			if index >= 0 and index < _material_recent.size():
+				_load_material_brush_material(_material_recent[index])
+
+
+## Opens the Material menu, scrolling the toolbar back to it if needed (used when the tool is chosen without a material).
+func _show_material_menu() -> void:
+	if not _material_menu or not _material_menu.is_visible_in_tree():
+		return
+	var cursor: Node = _material_menu.get_parent()
+	while cursor and not cursor is ScrollContainer:
+		cursor = cursor.get_parent()
+	if cursor:
+		(cursor as ScrollContainer).scroll_horizontal = 0
+	_material_menu.show_popup()
+
+func _browse_material_brush_material() -> void:
+	if _material_dialog:
+		_material_dialog.popup_centered_ratio(0.6)
+
+
+## Loads a material for the Material Brush and remembers it. Returns whether it could be used.
+func _load_material_brush_material(path: String) -> bool:
+	_material_autotick_mode = "restore" if _material_restoring else "replace"
+	var shader_material := _load_shader_material_from_path(path)
+	if shader_material != null:
+		var started := _start_material_shader(shader_material, path)
+		if not started:
+			_material_autotick_mode = ""
+		return started
+	var errors: Array = []
+	var loaded := GDDrawMaterialSet.load_from_path(path, errors)
+	if loaded == null:
+		_material_autotick_mode = ""
+		_material_notice(str(errors[0]) if not errors.is_empty() else "Could not load that material.", 1)
+		_refresh_material_recent_picker()
+		return false
+	_material_set = loaded
+	_material_shader = null
+	_material_shader_path = ""
+	_material_signature = GDDrawMaterialSet.material_signature(loaded.source_material)
+	var existing := _material_recent.find(path)
+	if existing >= 0:
+		_material_recent.remove_at(existing)
+	_material_recent.insert(0, path)
+	while _material_recent.size() > MATERIAL_BRUSH_RECENT_LIMIT:
+		_material_recent.remove_at(_material_recent.size() - 1)
+	_refresh_material_recent_picker()
+	_save_material_brush_preferences()
+	_update_material_brush_info()
+	_update_material_edit_state()
+	_set_status("Material Brush: %s (%s)." % [loaded.display_name, loaded.describe()])
+	_sync_material_companions_with_set()
+	_apply_material_settings_to_session()
+	return true
+
+
+## Copies the settings that decide how a painted channel LOOKS (deep parallax, layers and scale of the height map,
+## ambient-occlusion strength, ...) from the Material Brush's material onto the objects of the open session, once
+## per material and change, undoable. The textures alone are not the material: with a different height setting the
+## same height map renders as smeared parallax instead of what the material looked like in Material Maker.
+func _apply_material_settings_to_session() -> void:
+	if _material_set == null or _texture_3d_layer_coordinator == null or not _material_brush_active:
+		return
+	var settings: Dictionary = _material_set.target_settings()
+	if settings.is_empty():
+		return
+	var copied := PackedStringArray()
+	var touched_objects := {}
+	for texture_session in _texture_3d_layer_coordinator.texture_sessions.values():
+		if texture_session == null or not texture_session.has_active_session():
+			continue
+		var channel := str(texture_session.channel)
+		if not settings.has(channel) or not (channel == _paint_channel or _material_companion_channels.has(channel)):
+			continue
+		var live: StandardMaterial3D = texture_session.material
+		if texture_session.target and is_instance_valid(texture_session.target.source_node):
+			var slot_material := texture_session.target.get_material_for_slot(texture_session.material_slot) as StandardMaterial3D
+			if slot_material:
+				live = slot_material
+		if live == null:
+			continue
+		var values: Dictionary = settings[channel]
+		# Remember only the LAST values applied to this material and channel, so choosing an earlier setting again works
+		var key := "%d|%s" % [live.get_instance_id(), channel]
+		if _material_settings_applied.get(key, "") == str(values):
+			continue
+		_material_settings_applied[key] = str(values)
+		var changes := {}
+		for property_name: String in values:
+			if live.get(property_name) != values[property_name]:
+				changes[property_name] = values[property_name]
+		if changes.is_empty():
+			continue
+		var undo_redo := _plugin.get_undo_redo() if _plugin else null
+		if undo_redo:
+			undo_redo.create_action("Copy Material Brush %s settings" % GDDrawMaterialChannels.label(channel))
+			for property_name: String in changes:
+				undo_redo.add_do_property(live, property_name, changes[property_name])
+				undo_redo.add_undo_property(live, property_name, live.get(property_name))
+			undo_redo.commit_action()
+		for property_name: String in changes:
+			# also without an undo manager, and on GDDraw's private copy of the material
+			live.set(property_name, changes[property_name])
+			if texture_session.material != null and texture_session.material != live:
+				texture_session.material.set(property_name, changes[property_name])
+		copied.push_back(GDDrawMaterialChannels.label(channel))
+		touched_objects[live.resource_name] = true
+	if not copied.is_empty():
+		_material_notice("Copied the %s settings of %s to the painted material%s (Undo reverts them). Fine-tune them in the material's Inspector, e.g. Heightmap > Scale and Min/Max Layers." % [", ".join(copied).to_lower(), _material_set.display_name, "s" if touched_objects.size() > 1 else ""])
+
+
+## Keeps Also paint in step with the material: picking a material ticks exactly its channels (except the one
+## being painted), a material edit that adds a channel ticks that one, and the remembered material coming back
+## at start-up leaves the remembered ticks alone. The user can still untick channels afterwards.
+func _sync_material_companions_with_set() -> void:
+	if _material_set == null:
+		return
+	var mode := _material_autotick_mode
+	_material_autotick_mode = ""
+	# Only channels with a texture of their own: every material has a default roughness or metallic value, and
+	# creating a texture per object for a constant would be wasteful (tick those by hand if wanted).
+	var channels := PackedStringArray()
+	for channel_id in _material_set.channels():
+		if _material_set.has_texture(channel_id):
+			channels.push_back(channel_id)
+	var wanted := PackedStringArray()
+	for channel_id in channels:
+		if channel_id != _paint_channel and (mode == "replace" or not _material_known_channels.has(channel_id)):
+			wanted.push_back(channel_id)
+	_material_known_channels = channels.duplicate()
+	if mode == "restore":
+		return
+	var next := PackedStringArray() if mode == "replace" else _material_companion_channels.duplicate()
+	for channel_id in wanted:
+		if not next.has(channel_id):
+			next.push_back(channel_id)
+	if next == _material_companion_channels:
+		return
+	_material_companion_channels = next
+	_refresh_material_companion_menu()
+	_save_material_brush_preferences()
+	if not wanted.is_empty():
+		var labels := PackedStringArray()
+		for channel_id in wanted:
+			labels.push_back(GDDrawMaterialChannels.label(channel_id))
+		_material_notice("Also paint follows %s: %s." % [_material_set.display_name, ", ".join(labels)])
+	_ensure_material_companions()
+
+
+func _on_material_transform_changed(_value: float) -> void:
+	_update_material_transform()
+	_save_material_brush_preferences()
+
+
+func _update_material_transform() -> void:
+	var radians := deg_to_rad(_material_rotation.value) if _material_rotation else 0.0
+	_material_rotation_cs = Vector2(cos(radians), sin(radians))
+
+
+func _on_material_brush_toggled(enabled: bool) -> void:
+	if not _canvas:
+		return
+	if enabled:
+		_material_brush_selecting = true
+		_material_brush_active = true
+		_select_tool(GDDrawCanvasControl.ToolMode.BRUSH)
+		_material_brush_selecting = false
+		if _material_set == null and not _material_recent.is_empty():
+			_material_restoring = true
+			_load_material_brush_material(_material_recent[0])
+			_material_restoring = false
+		if _material_set == null:
+			_set_status("Material Brush: choose New Material or Open… in the Material menu.")
+			_show_material_menu.call_deferred()
+		else:
+			_ensure_material_companions()
+	elif _material_brush_active:
+		_select_tool(GDDrawCanvasControl.ToolMode.BRUSH)
+
+
+## The material channel the active paint target represents (albedo for plain 2D documents).
+func _get_material_brush_channel() -> String:
+	var target = _layer_session.get_active_target() if _layer_session else null
+	var channel_id := str(target.channel_id) if target else ""
+	return channel_id if GDDrawMaterialChannels.has_channel(channel_id) else GDDrawMaterialChannels.ALBEDO
+
+
+func _update_material_brush_info() -> void:
+	if not _material_info:
+		return
+	# The toolbar stays compact: the label only appears when the brush cannot paint the current channel.
+	# What is being painted from what is on the Material menu's tooltip.
+	_material_info.visible = false
+	_material_info.remove_theme_color_override("font_color")
+	if _material_baking:
+		_material_info.text = "Baking…"
+		_material_info.tooltip_text = "The shader is being baked into textures for the brush."
+		_material_info.visible = true
+	var menu_tooltip := "What the brush paints with. Create a new material, open a StandardMaterial3D or a texture set, edit the current material in the Inspector, or pick a recent one."
+	if _material_set == null:
+		_material_info.tooltip_text = ""
+		if _material_menu:
+			_material_menu.tooltip_text = menu_tooltip
+		return
+	var channel := _get_material_brush_channel()
+	var channel_label := GDDrawMaterialChannels.label(channel)
+	if _material_set.has_channel(channel):
+		menu_tooltip += "\n\nPainting %s from %s." % [channel_label, _material_set.display_name]
+	else:
+		_material_info.text = "⚠ No %s map" % channel_label.to_lower()
+		_material_info.add_theme_color_override("font_color", Color("#E6B450"))
+		_material_info.visible = true
+		menu_tooltip += "\n\n%s has no %s, so nothing is painted in this channel." % [_material_set.display_name, channel_label.to_lower()]
+	menu_tooltip += "\nChannels in this material: %s." % _material_set.describe()
+	_material_info.tooltip_text = "%s has no %s, so nothing is painted in this channel." % [_material_set.display_name, channel_label.to_lower()]
+	if _material_menu:
+		_material_menu.tooltip_text = menu_tooltip
+
+## Creates a StandardMaterial3D file, selects it for the brush and opens it in the Inspector.
+func _create_new_material_brush_material() -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(MATERIAL_BRUSH_MATERIAL_DIR))
+	var index := 1
+	var path := "%s/material_brush_%d.tres" % [MATERIAL_BRUSH_MATERIAL_DIR, index]
+	while FileAccess.file_exists(path):
+		index += 1
+		path = "%s/material_brush_%d.tres" % [MATERIAL_BRUSH_MATERIAL_DIR, index]
+	var material := StandardMaterial3D.new()
+	material.resource_name = "Material Brush %d" % index
+	material.take_over_path(path)
+	var error := ResourceSaver.save(material, path)
+	if error != OK:
+		_material_notice("Could not create %s (error %d)." % [path, error], 2)
+		return
+	if _plugin:
+		_plugin.get_editor_interface().get_resource_filesystem().update_file(path)
+	if not _load_material_brush_material(path):
+		return
+	_edit_material_brush_material_in_inspector()
+	_material_notice("Created %s. Set its textures and values in the Inspector; the brush follows your edits and the file is saved automatically." % path.get_file())
+
+
+## The res:// file of the current material when it is a material file (.tres, .res, .material) that can be
+## renamed or deleted; "" for texture sets, .gdshader files and materials that live inside another resource.
+func _material_file_path() -> String:
+	var path := ""
+	if _material_shader != null:
+		path = _material_shader.resource_path
+	elif _material_set != null and _material_set.source_material != null:
+		path = _material_set.source_material.resource_path
+	if not path.begins_with("res://") or path.contains("::") or path.get_extension().to_lower() not in GDDrawMaterialSet.MATERIAL_EXTENSIONS:
+		return ""
+	return path
+
+
+func _ask_rename_material_brush_material() -> void:
+	var path := _material_file_path()
+	if path == "" or _material_rename_dialog == null:
+		return
+	_material_rename_edit.text = path.get_file().get_basename()
+	_material_rename_dialog.popup_centered()
+	_material_rename_edit.grab_focus()
+	_material_rename_edit.select_all()
+
+
+func _on_material_rename_confirmed() -> void:
+	_rename_material_brush_material(_material_rename_edit.text)
+
+
+## Renames the current material's file (keeping its folder and extension) and everything that points to it.
+func _rename_material_brush_material(new_name: String) -> bool:
+	var path := _material_file_path()
+	var base_name := new_name.strip_edges().trim_suffix("." + path.get_extension())
+	if path == "":
+		_material_notice("Only a material file can be renamed (not a texture set or a .gdshader).", 1)
+		return false
+	if base_name == "" or not base_name.is_valid_filename():
+		_material_notice("\"%s\" is not a usable file name." % new_name.strip_edges(), 1)
+		return false
+	var new_path := "%s/%s.%s" % [path.get_base_dir(), base_name, path.get_extension()]
+	if new_path == path:
+		return true
+	if FileAccess.file_exists(new_path):
+		_material_notice("%s already exists." % new_path.get_file(), 1)
+		return false
+	var error := DirAccess.rename_absolute(ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(new_path))
+	if error != OK:
+		_material_notice("Could not rename %s (error %d)." % [path.get_file(), error], 2)
+		return false
+	var resource := _material_editable_resource()
+	if resource != null:
+		resource.take_over_path(new_path)
+		if _is_material_brush_owned_path(new_path):
+			resource.resource_name = base_name
+			ResourceSaver.save(resource, new_path)
+	if _material_set != null and _material_set.source_path == path:
+		_material_set.source_path = new_path
+		_material_set.display_name = base_name
+	if _material_shader_path == path:
+		_material_shader_path = new_path
+	var recent_index := _material_recent.find(path)
+	if recent_index >= 0:
+		_material_recent[recent_index] = new_path
+	_save_material_brush_preferences()
+	if _plugin:
+		_plugin.get_editor_interface().get_resource_filesystem().scan()
+	_update_material_edit_state()
+	_material_notice("Renamed %s to %s." % [path.get_file(), new_path.get_file()])
+	return true
+
+
+func _ask_delete_material_brush_material() -> void:
+	var path := _material_file_path()
+	if path == "" or _material_delete_dialog == null:
+		return
+	_material_delete_dialog.dialog_text = "Move %s to the trash?\n\nScenes and other resources that use this material will lose it. You can restore the file from the trash." % path
+	_material_delete_dialog.popup_centered()
+
+
+## Deletes the current material's file (to the OS trash, so it can be restored) and forgets it in the brush.
+func _delete_material_brush_material(use_trash := true) -> bool:
+	var path := _material_file_path()
+	if path == "":
+		_material_notice("Only a material file can be deleted (not a texture set or a .gdshader).", 1)
+		return false
+	var global_path := ProjectSettings.globalize_path(path)
+	var error := OS.move_to_trash(global_path) if use_trash else DirAccess.remove_absolute(global_path)
+	if error != OK:
+		_material_notice("Could not delete %s (error %d)." % [path.get_file(), error], 2)
+		return false
+	var recent_index := _material_recent.find(path)
+	if recent_index >= 0:
+		_material_recent.remove_at(recent_index)
+	_material_set = null
+	_material_known_channels = PackedStringArray()
+	_material_shader = null
+	_material_shader_path = ""
+	_material_signature = ""
+	_material_shader_signature = ""
+	_reset_material_stroke()
+	_save_material_brush_preferences()
+	if _plugin:
+		_plugin.get_editor_interface().get_resource_filesystem().scan()
+	_update_material_brush_info()
+	_update_material_edit_state()
+	_material_notice("Deleted %s%s. Choose another material from the Material menu." % [path.get_file(), " (moved to the trash)" if use_trash else ""])
+	return true
+
+
+## Creates a ShaderMaterial with a small procedural shader, selects it for the brush and opens it in the Inspector.
+## Feedback for the Material Brush. GDDraw's own status line is not displayed in this version, so messages
+## that matter are shown as editor toasts (severity 0 info, 1 warning, 2 error); the last one is kept for tests.
+var _material_last_notice := ""
+var _material_companion_skips := PackedStringArray()
+var _material_companion_skip_reported := ""
+var _material_companion_offered := ""
+var _material_known_channels := PackedStringArray()
+var _material_autotick_mode := ""
+var _material_restoring := false
+var _material_settings_applied := {}
+
+
+func _material_notice(message: String, severity := 0) -> void:
+	_material_last_notice = message
+	_set_status(message)
+	if not _plugin:
+		return
+	var toaster = _plugin.get_editor_interface().get_editor_toaster() if _plugin.get_editor_interface().has_method("get_editor_toaster") else null
+	if toaster and toaster.has_method("push_toast"):
+		toaster.push_toast(message, severity)
+
+
+func _create_new_shader_material() -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(MATERIAL_BRUSH_MATERIAL_DIR))
+	var index := 1
+	var path := "%s/material_brush_shader_%d.tres" % [MATERIAL_BRUSH_MATERIAL_DIR, index]
+	while FileAccess.file_exists(path):
+		index += 1
+		path = "%s/material_brush_shader_%d.tres" % [MATERIAL_BRUSH_MATERIAL_DIR, index]
+	var shader := Shader.new()
+	shader.code = GDDrawShaderBaker.TEMPLATE_CODE
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.resource_name = "Shader Material %d" % index
+	material.take_over_path(path)
+	var error := ResourceSaver.save(material, path)
+	if error != OK:
+		_material_notice("Could not create %s (error %d)." % [path, error], 2)
+		return
+	if _plugin:
+		_plugin.get_editor_interface().get_resource_filesystem().update_file(path)
+	if not _load_material_brush_material(path):
+		return
+	_edit_material_brush_material_in_inspector()
+	_material_notice("Created %s. Change its parameters or open the shader from the Inspector; the brush re-bakes as you edit and the file is saved automatically." % path.get_file())
+
+
+## The resource the Inspector edits for the current material: a StandardMaterial3D, or the ShaderMaterial the brush baked.
+func _material_editable_resource() -> Resource:
+	if _material_shader != null:
+		return _material_shader
+	if _material_set != null and _material_set.source_material != null:
+		return _material_set.source_material
+	return null
+
+
+func _edit_material_brush_material_in_inspector() -> void:
+	var resource := _material_editable_resource()
+	if resource == null or not _plugin:
+		return
+	_plugin.get_editor_interface().inspect_object(resource)
+
+
+func _is_material_brush_owned_path(path: String) -> bool:
+	return path.begins_with(MATERIAL_BRUSH_MATERIAL_DIR + "/")
+
+
+func _update_material_edit_state() -> void:
+	_rebuild_material_menu()
+	if _material_poll_timer:
+		var watching: bool = _material_brush_active and _material_editable_resource() != null
+		if watching and _material_poll_timer.is_stopped():
+			_material_poll_timer.start()
+		elif not watching and not _material_poll_timer.is_stopped():
+			_material_poll_timer.stop()
+
+
+## A ShaderMaterial for a material file or a .gdshader file (null for anything else).
+func _load_shader_material_from_path(path: String) -> ShaderMaterial:
+	if not FileAccess.file_exists(path):
+		return null
+	var extension := path.get_extension().to_lower()
+	if extension == "gdshader":
+		var shader := ResourceLoader.load(path, "Shader", ResourceLoader.CACHE_MODE_REUSE) as Shader
+		if shader == null:
+			return null
+		var wrapper := ShaderMaterial.new()
+		wrapper.shader = shader
+		return wrapper
+	if extension in ["tres", "res", "material"]:
+		return ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_REUSE) as ShaderMaterial
+	return null
+
+
+## Selects a ShaderMaterial for the brush and starts baking it (the bake finishes a moment later).
+func _start_material_shader(material: ShaderMaterial, path: String) -> bool:
+	var code := material.shader.code if material.shader != null else ""
+	if GDDrawShaderBaker.detect_channels(code).is_empty():
+		_material_notice("%s has nothing the brush can bake: it needs a spatial shader that writes ALBEDO, EMISSION, ROUGHNESS, METALLIC or AO in fragment() (or a canvas_item shader)." % path.get_file(), 1)
+		return false
+	_material_shader = material
+	_material_shader_path = path
+	_material_shader_signature = ""
+	var existing := _material_recent.find(path)
+	if existing >= 0:
+		_material_recent.remove_at(existing)
+	_material_recent.insert(0, path)
+	while _material_recent.size() > MATERIAL_BRUSH_RECENT_LIMIT:
+		_material_recent.remove_at(_material_recent.size() - 1)
+	_save_material_brush_preferences()
+	_update_material_edit_state()
+	_bake_material_brush_shader()
+	return true
+
+
+func _bake_material_brush_shader() -> void:
+	if _material_shader == null or _material_baking:
+		return
+	_material_baking = true
+	_update_material_brush_info()
+	var shader_material := _material_shader
+	var path := _material_shader_path
+	var signature := GDDrawShaderBaker.material_signature(shader_material)
+	var shader_name := GDDrawMaterialSet.name_for_path(path)
+	_set_status("Baking %s at %d px…" % [shader_name, _material_bake_size])
+	var images: Dictionary = await GDDrawShaderBaker.bake(self, shader_material, _material_bake_size)
+	_material_baking = false
+	_update_material_brush_info()
+	if _material_shader != shader_material:
+		# The brush moved on to another material while this one baked.
+		_bake_material_brush_shader()
+		return
+	# Remembered before checking the result so a shader that cannot be baked is not retried in a loop.
+	_material_shader_signature = signature
+	var baked := GDDrawMaterialSet.load_from_baked(images, shader_name, shader_material, path)
+	if baked == null:
+		_material_notice("Could not bake %s: nothing was drawn (does the shader compile? it needs a spatial shader writing ALBEDO, ROUGHNESS, ... in fragment())." % shader_name, 1)
+		_update_material_brush_info()
+		return
+	_material_set = baked
+	_update_material_brush_info()
+	_update_material_edit_state()
+	_set_status("Material Brush: %s baked at %d px (%s)." % [shader_name, _material_bake_size, baked.describe()])
+	_sync_material_companions_with_set()
+
+
+func _on_material_bake_size_selected(id: int) -> void:
+	if not id in GDDrawShaderBaker.SIZES:
+		return
+	_material_bake_size = id
+	_save_material_brush_preferences()
+	_rebuild_material_menu()
+	if _material_shader != null:
+		_material_shader_signature = ""
+		_bake_material_brush_shader()
+
+
+## Follows edits made to the material in the Inspector: reloads the brush's textures and values when
+## something it reads changed, and saves materials that GDDraw created.
+func _poll_material_brush_material() -> void:
+	if _material_shader != null:
+		_poll_material_brush_shader()
+		return
+	if _material_set == null or _material_set.source_material == null:
+		return
+	var material := _material_set.source_material
+	var signature := GDDrawMaterialSet.material_signature(material)
+	if signature == _material_signature:
+		return
+	_material_signature = signature
+	var reloaded := GDDrawMaterialSet.load_from_material(material, _material_set.source_path)
+	if reloaded != null:
+		_material_set = reloaded
+		_sync_material_companions_with_set()
+		_apply_material_settings_to_session()
+	_update_material_brush_info()
+	if _is_material_brush_owned_path(material.resource_path) and ResourceSaver.save(material, material.resource_path) == OK and _plugin:
+		_plugin.get_editor_interface().get_resource_filesystem().update_file(material.resource_path)
+
+
+## The shader version of the above: a changed shader or parameter is saved (own materials) and re-baked.
+func _poll_material_brush_shader() -> void:
+	if _material_baking:
+		return
+	if GDDrawShaderBaker.material_signature(_material_shader) == _material_shader_signature:
+		return
+	if _is_material_brush_owned_path(_material_shader.resource_path) and ResourceSaver.save(_material_shader, _material_shader.resource_path) == OK and _plugin:
+		_plugin.get_editor_interface().get_resource_filesystem().update_file(_material_shader.resource_path)
+	_bake_material_brush_shader()
+
+## The native path of the Material Brush (see the canvas): the material's colours for a rectangle of layer pixels
+## as one opaque image, cut from a tile of the material that is prepared once per material, channel, scale and
+## canvas size. null (-> the canvas paints pixel by pixel) when the material needs per-pixel work: a rotation,
+## a tinted or transparent map, or a tile that would be too large.
+func _material_region_provider(rect: Rect2i) -> Variant:
+	if _material_set == null or _canvas == null or _material_rotation == null or absf(_material_rotation.value) > 0.001:
+		return null
+	var channel := _get_material_brush_channel()
+	if not _material_set.has_channel(channel):
+		return null
+	var origin: Vector2i = _canvas.get_workspace_origin() if _canvas.has_method("get_workspace_origin") else Vector2i.ZERO
+	return _material_region(channel, _canvas.get_canvas_size(), Rect2i(rect.position + origin, rect.size))
+
+
+func _get_material_tile(channel: String, document_size: Vector2i) -> Dictionary:
+	var key := "%d|%s|%d,%d|%s" % [_material_set.get_instance_id(), channel, document_size.x, document_size.y, str(_material_scale.value)]
+	if _material_tiles.has(key):
+		return _material_tiles[key]
+	var data := {}
+	var map: Variant = _material_set.fast_map(channel)
+	if map is Color:
+		data = {"map": map, "shift": Vector2i.ZERO}
+	elif map is Image:
+		var repeats := maxf(0.05, _material_scale.value)
+		var tile_width := maxi(1, roundi(float(document_size.x) / repeats))
+		var tile_height := maxi(1, roundi(float(document_size.y) / repeats))
+		if tile_width * tile_height <= 67108864:
+			var tile: Image = map
+			if tile.get_size() != Vector2i(tile_width, tile_height):
+				tile = (map as Image).duplicate()
+				tile.resize(tile_width, tile_height, Image.INTERPOLATE_BILINEAR)
+			# The tiling is centred on the texture, like the per-pixel sampling.
+			data = {"map": tile, "shift": Vector2i(roundi(tile_width * 0.5 - document_size.x * 0.5), roundi(tile_height * 0.5 - document_size.y * 0.5))}
+	if _material_tiles.size() >= 6:
+		_material_tiles.clear()
+	_material_tiles[key] = data
+	return data
+
+
+## `document_rect` (document pixels) filled with the material's tiled map; null when the native path cannot.
+func _material_region(channel: String, document_size: Vector2i, document_rect: Rect2i) -> Variant:
+	if _material_set == null or _material_rotation == null or absf(_material_rotation.value) > 0.001:
+		return null
+	var tile := _get_material_tile(channel, document_size)
+	if tile.is_empty() or document_rect.size.x <= 0 or document_rect.size.y <= 0:
+		return null
+	var region := Image.create_empty(document_rect.size.x, document_rect.size.y, false, Image.FORMAT_RGBA8)
+	var map: Variant = tile["map"]
+	if map is Color:
+		region.fill(Color(map.r, map.g, map.b, 1.0))
+		return region
+	var tile_image: Image = map
+	var shift: Vector2i = tile["shift"]
+	var y := 0
+	while y < document_rect.size.y:
+		var tile_y := posmod(document_rect.position.y + y + shift.y, tile_image.get_height())
+		var run_height := mini(tile_image.get_height() - tile_y, document_rect.size.y - y)
+		var x := 0
+		while x < document_rect.size.x:
+			var tile_x := posmod(document_rect.position.x + x + shift.x, tile_image.get_width())
+			var run_width := mini(tile_image.get_width() - tile_x, document_rect.size.x - x)
+			region.blit_rect(tile_image, Rect2i(tile_x, tile_y, run_width, run_height), Vector2i(x, y))
+			x += run_width
+		y += run_height
+	return region
+
+
+func _material_stamp_recorder(top_left: Vector2i, stamp: Image) -> void:
+	if _canvas == null or not _material_wants_companions():
+		return
+	var origin: Vector2i = _canvas.get_workspace_origin() if _canvas.has_method("get_workspace_origin") else Vector2i.ZERO
+	var document_size: Vector2i = _canvas.get_canvas_size()
+	if _material_mask_image == null or _material_mask_image.get_size() != document_size:
+		_material_mask_image = Image.create_empty(document_size.x, document_size.y, false, Image.FORMAT_RGBA8)
+		_material_mask_bounds = Rect2i()
+	var document_position := top_left + origin
+	_material_mask_image.blend_rect(stamp, Rect2i(Vector2i.ZERO, stamp.get_size()), document_position)
+	var touched := Rect2i(document_position, stamp.get_size()).intersection(Rect2i(Vector2i.ZERO, document_size))
+	if touched.has_area():
+		_material_mask_bounds = touched if not _material_mask_bounds.has_area() else _material_mask_bounds.merge(touched)
+
+## Called by the canvas for every brush pixel while the Material Brush is active: returns the
+## material's colour for the channel being painted (alpha keeps the brush opacity).
+func _material_brush_pixel(x: int, y: int, brush_color: Color, coverage := 1.0) -> Color:
+	var channel := _get_material_brush_channel()
+	if _material_set == null or _canvas == null or not _material_set.has_channel(channel):
+		return Color(brush_color.r, brush_color.g, brush_color.b, 0.0)
+	var origin: Vector2i = _canvas.get_workspace_origin() if _canvas.has_method("get_workspace_origin") else Vector2i.ZERO
+	var document_size: Vector2i = _canvas.get_canvas_size()
+	var uv := Vector2(float(x + origin.x) + 0.5, float(y + origin.y) + 0.5) / Vector2(document_size)
+	if not _material_companion_channels.is_empty() and _material_wants_companions():
+		_record_material_stroke_pixel(x + origin.x, y + origin.y, document_size, brush_color.a * coverage)
+	var sampled := _material_sample_at(channel, uv)
+	return Color(sampled.r, sampled.g, sampled.b, sampled.a * brush_color.a)
+
+
+## The material's colour for `channel` at a position (0-1 across the texture), with the brush's scale and rotation.
+func _material_sample_at(channel: String, uv: Vector2) -> Color:
+	var centered := uv - Vector2(0.5, 0.5)
+	var rotated := Vector2(
+		centered.x * _material_rotation_cs.x - centered.y * _material_rotation_cs.y,
+		centered.x * _material_rotation_cs.y + centered.y * _material_rotation_cs.x
+	)
+	var sampled := _material_set.sample(channel, rotated * _material_scale.value + Vector2(0.5, 0.5))
+	if channel == "normal" and _material_rotation_cs.y != 0.0:
+		# The pattern is rotated, so the tangent-space normals it holds turn with it (the inverse of the sampling turn).
+		var normal_x := sampled.r - 0.5
+		var normal_y := sampled.g - 0.5
+		sampled.r = _material_rotation_cs.x * normal_x + _material_rotation_cs.y * normal_y + 0.5
+		sampled.g = -_material_rotation_cs.y * normal_x + _material_rotation_cs.x * normal_y + 0.5
+	return sampled
+
+
+func _toggle_material_normal_flip() -> void:
+	if _material_set == null or not _material_set.has_texture("normal"):
+		return
+	_material_set.flip_normal_green = not _material_set.flip_normal_green
+	# the prepared tiles hold the old orientation
+	_material_tiles.clear()
+	_rebuild_material_menu()
+	_material_notice("Normal map green channel %s." % ("flipped (DirectX maps)" if _material_set.flip_normal_green else "as stored (OpenGL maps, what Godot uses)"))
+
+## Whether Material Brush strokes should also be painted into other channels of the open 3D session.
+func _material_wants_companions() -> bool:
+	return (
+		_material_brush_active
+		and not _material_companion_channels.is_empty()
+		and _texture_3d_layer_coordinator != null
+		and _layer_session != null
+		and _layer_session.session_kind == "3d"
+	)
+
+
+func _refresh_material_companion_menu() -> void:
+	if not _material_companion_button:
+		return
+	var popup := _material_companion_button.get_popup()
+	var channel_ids := GDDrawMaterialChannels.ids()
+	for index in range(channel_ids.size()):
+		popup.set_item_checked(index, _material_companion_channels.has(channel_ids[index]))
+	_material_companion_button.text = "Also paint" if _material_companion_channels.is_empty() else "Also paint (%d)" % _material_companion_channels.size()
+
+
+func _on_material_companion_toggled(id: int) -> void:
+	var channel_ids := GDDrawMaterialChannels.ids()
+	if id < 0 or id >= channel_ids.size():
+		return
+	var channel_id := channel_ids[id]
+	var existing := _material_companion_channels.find(channel_id)
+	if existing >= 0:
+		_material_companion_channels.remove_at(existing)
+	else:
+		_material_companion_channels.push_back(channel_id)
+	_refresh_material_companion_menu()
+	_save_material_brush_preferences()
+	_ensure_material_companions()
+
+
+## Adds a companion target for every ticked channel to a discovery result (once per channel and surface).
+func _add_material_companions(discovery: Dictionary) -> Dictionary:
+	if not _material_brush_active or _material_companion_channels.is_empty() or str(discovery.get("status", "error")) != "ok":
+		return discovery
+	var helper = _make_script_instance(LAYER_3D_DISCOVERY_SCRIPT_PATH, RefCounted.new())
+	var targets: Array = (discovery.get("targets", []) as Array).duplicate()
+	var known := {}
+	_material_companion_skips = PackedStringArray()
+	for descriptor in targets:
+		known[str(descriptor.get("key", ""))] = true
+	for descriptor in discovery.get("targets", []):
+		if bool(descriptor.get("companion", false)):
+			continue
+		for channel_id in _material_companion_channels:
+			var companion: Dictionary = helper.make_companion_descriptor(descriptor, channel_id)
+			if companion.is_empty():
+				if not helper.last_skip_reason.is_empty() and is_instance_valid(descriptor.get("source_node", null)):
+					_material_companion_skips.push_back("%s %s (%s)" % [
+						str(descriptor["source_node"].name), GDDrawMaterialChannels.label(channel_id), helper.last_skip_reason
+					])
+				continue
+			if known.has(str(companion.get("key", ""))):
+				continue
+			known[str(companion.get("key", ""))] = true
+			targets.push_back(companion)
+	var extended := discovery.duplicate()
+	extended["targets"] = targets
+	return extended
+
+
+## A fresh look at the open 3D objects: the discovery with the Also-paint companions included ("desired")
+## and the companion targets the open session does not have yet ("missing").
+func _material_companion_plan() -> Dictionary:
+	var plan := {"desired": {}, "missing": []}
+	if not _material_wants_companions():
+		return plan
+	var roots := _get_3d_channel_switch_roots()
+	if roots.is_empty():
+		return plan
+	var helper = _make_script_instance(LAYER_3D_DISCOVERY_SCRIPT_PATH, RefCounted.new())
+	var scope := (
+		GDDraw3DLayerDiscovery.Scope.EXPLICIT_SELECTION
+		if roots.size() > 1
+		else GDDraw3DLayerDiscovery.Scope.SELECTED_HIERARCHY
+	)
+	var desired := _add_material_companions(helper.discover(roots, scope, _paint_channel))
+	if str(desired.get("status", "error")) != "ok":
+		return plan
+	plan["desired"] = desired
+	for descriptor in desired.get("targets", []):
+		if not _texture_3d_layer_coordinator.binding_targets.has(str(descriptor.get("key", ""))):
+			plan["missing"].push_back(descriptor)
+	return plan
+
+
+## Reopens the current 3D objects with the companion targets the Material Brush needs, if some are missing.
+func _ensure_material_companions() -> void:
+	var plan := _material_companion_plan()
+	if not (plan["missing"] as Array).is_empty():
+		_begin_3d_layer_session(plan["desired"])
+
+
+## Runs after every 3D session opens (a new model, a channel switch, ...): if a channel ticked in Also paint has
+## no texture yet on the loaded objects, the create-missing-textures question pops up at once, and channels that
+## cannot be painted on some object are reported. A declined offer is not repeated for the same missing textures.
+func _check_material_companions_after_load() -> void:
+	var plan := _material_companion_plan()
+	var notes := _material_companion_skips.duplicate()
+	if notes.is_empty():
+		_material_companion_skip_reported = ""
+	elif str(notes) != _material_companion_skip_reported:
+		_material_companion_skip_reported = str(notes)
+		_material_notice("Also paint cannot cover: " + "; ".join(notes) + ".", 1)
+	var missing: Array = plan["missing"]
+	if missing.is_empty():
+		_material_companion_offered = ""
+		return
+	var keys := PackedStringArray()
+	for descriptor in missing:
+		keys.push_back(str(descriptor.get("key", "")))
+	keys.sort()
+	var signature := "|".join(keys)
+	if signature == _material_companion_offered:
+		return
+	_material_companion_offered = signature
+	_begin_3d_layer_session(plan["desired"])
+
+
+func _record_material_stroke_pixel(document_x: int, document_y: int, document_size: Vector2i, alpha: float) -> void:
+	if document_x < 0 or document_y < 0 or document_x >= document_size.x or document_y >= document_size.y:
+		return
+	if _material_stroke_mask.is_empty():
+		_material_stroke_size = document_size
+		_material_stroke_bounds = Rect2i(document_x, document_y, 1, 1)
+	elif _material_stroke_size != document_size:
+		return
+	else:
+		# Rect2i.expand() keeps the far edge exclusive, so both the pixel and its far corner are added.
+		_material_stroke_bounds = _material_stroke_bounds.expand(Vector2i(document_x, document_y)).expand(Vector2i(document_x + 1, document_y + 1))
+	var index := document_y * document_size.x + document_x
+	var previous: float = _material_stroke_mask.get(index, 0.0)
+	var painted := clampf(alpha, 0.0, 1.0)
+	_material_stroke_mask[index] = (
+		1.0 - (1.0 - previous) * (1.0 - painted)
+		if _canvas.stroke_overlap_enabled
+		else maxf(previous, painted)
+	)
+
+
+func _reset_material_stroke() -> void:
+	_material_mask_image = null
+	_material_mask_bounds = Rect2i()
+	_material_stroke_mask = {}
+	_material_stroke_bounds = Rect2i()
+	_material_stroke_size = Vector2i.ZERO
+
+
+## Called when a stroke is committed: paints the same stroke into the companion channels from the matching
+## maps of the material. The undo snapshot of the stroke was taken just before, and it holds every target of
+## the session, so undo and redo restore the companion channels together with the painted one.
+func _stamp_material_companions() -> void:
+	var mask_image := _material_mask_image
+	var mask_image_bounds := _material_mask_bounds
+	var mask := _material_stroke_mask
+	var bounds := _material_stroke_bounds
+	var mask_size := _material_stroke_size
+	_reset_material_stroke()
+	if (mask.is_empty() and mask_image == null) or not _material_wants_companions() or _material_set == null:
+		return
+	var active_target = _layer_session.get_active_target()
+	if not active_target:
+		return
+	var stamped := PackedStringArray()
+	for companion in _get_material_companion_targets(active_target):
+		var channel_id := str(companion.channel_id)
+		if not _material_companion_channels.has(channel_id) or not _material_set.has_channel(channel_id):
+			continue
+		var painted := false
+		if mask_image != null:
+			painted = _stamp_material_into_target_native(companion, channel_id, mask_image, mask_image_bounds)
+			if not painted and mask.is_empty():
+				# This companion cannot use the native route (another size, alpha lock, a tinted map): build the
+				# dictionary mask from the image once and paint it pixel by pixel.
+				mask = _material_mask_image_to_dictionary(mask_image, mask_image_bounds)
+				bounds = mask_image_bounds
+				mask_size = _canvas.get_canvas_size()
+		if not painted and not mask.is_empty():
+			painted = _stamp_material_into_target(companion, channel_id, mask, bounds, mask_size)
+		if painted:
+			stamped.push_back(GDDrawMaterialChannels.label(channel_id))
+			_invalidate_layer_thumbnail(companion.target_id, companion.selected_layer_id)
+	if not stamped.is_empty():
+		_set_status("Material Brush: also painted %s." % ", ".join(stamped))
+
+
+## Targets of the same surface and material slot as `active_target` that hold another channel.
+func _get_material_companion_targets(active_target) -> Array:
+	var result: Array = []
+	var active_members: Array = active_target.binding.get("members", [active_target.binding])
+	for candidate in _layer_session.paint_targets:
+		if candidate == active_target or str(candidate.channel_id) == str(active_target.channel_id):
+			continue
+		var members: Array = candidate.binding.get("members", [candidate.binding])
+		var shares_surface := false
+		for member in members:
+			for active_member in active_members:
+				if (
+					str(member.get("source_key", "")) == str(active_member.get("source_key", ""))
+					and int(member.get("material_slot", 0)) == int(active_member.get("material_slot", 0))
+				):
+					shares_surface = true
+		if shares_surface:
+			result.push_back(candidate)
+	return result
+
+
+## Paints a companion channel from the stroke's coverage image in one native pass: the material's colours for
+## the stroke's bounding box, with the coverage as alpha, blended into the target. false when it cannot.
+func _stamp_material_into_target_native(target, channel_id: String, mask_image: Image, bounds: Rect2i) -> bool:
+	if _canvas == null or _canvas.alpha_lock or not bounds.has_area():
+		return false
+	var document_size: Vector2i = _canvas.get_canvas_size()
+	if target.size != document_size or _material_set.fast_map(channel_id) == null:
+		return false
+	var region: Variant = _material_region(channel_id, document_size, bounds)
+	if not region is Image:
+		return false
+	var colours := region as Image
+	var coverage := mask_image.get_region(bounds).get_data()
+	var data := colours.get_data()
+	for pixel_index in range(bounds.size.x * bounds.size.y):
+		data[pixel_index * 4 + 3] = coverage[pixel_index * 4 + 3]
+	var stamp := Image.create_from_data(bounds.size.x, bounds.size.y, false, Image.FORMAT_RGBA8, data)
+	var image: Image = target.get_selected_layer_image()
+	if image == null or image.is_empty():
+		return false
+	image.blend_rect(stamp, Rect2i(Vector2i.ZERO, bounds.size), bounds.position - target.get_selected_layer_origin())
+	return target.adopt_selected_layer_image(image)
+
+
+## The coverage image as the pixel-index -> alpha dictionary the per-pixel companion route reads.
+func _material_mask_image_to_dictionary(mask_image: Image, bounds: Rect2i) -> Dictionary:
+	var result := {}
+	var document_width := mask_image.get_width()
+	var bytes := mask_image.get_region(bounds).get_data()
+	var width := bounds.size.x
+	for row in range(bounds.size.y):
+		for column in range(width):
+			var level: int = bytes[(row * width + column) * 4 + 3]
+			if level > 0:
+				result[(bounds.position.y + row) * document_width + bounds.position.x + column] = float(level) / 255.0
+	return result
+
+
+func _stamp_material_into_target(target, channel_id: String, mask: Dictionary, bounds: Rect2i, mask_size: Vector2i) -> bool:
+	var image: Image = target.get_selected_layer_image()
+	if image == null or image.is_empty() or mask_size.x <= 0 or mask_size.y <= 0:
+		return false
+	var origin: Vector2i = target.get_selected_layer_origin()
+	var document_size: Vector2i = target.size
+	var lock_alpha: bool = _canvas.alpha_lock
+	var changed := false
+	if document_size == mask_size:
+		for index in mask:
+			var document_x: int = int(index) % mask_size.x
+			var document_y: int = floori(float(int(index)) / float(mask_size.x))
+			var uv := Vector2(float(document_x) + 0.5, float(document_y) + 0.5) / Vector2(document_size)
+			if _blend_material_pixel(image, document_x - origin.x, document_y - origin.y, _material_sample_at(channel_id, uv), float(mask[index]), lock_alpha):
+				changed = true
+	else:
+		# A different texture size: walk this texture's pixels under the stroke and look the stroke up by position.
+		var from_x := maxi(0, floori(float(bounds.position.x) / float(mask_size.x) * float(document_size.x)))
+		var to_x := mini(document_size.x - 1, ceili(float(bounds.end.x) / float(mask_size.x) * float(document_size.x)))
+		var from_y := maxi(0, floori(float(bounds.position.y) / float(mask_size.y) * float(document_size.y)))
+		var to_y := mini(document_size.y - 1, ceili(float(bounds.end.y) / float(mask_size.y) * float(document_size.y)))
+		for document_y in range(from_y, to_y + 1):
+			for document_x in range(from_x, to_x + 1):
+				var uv := Vector2(float(document_x) + 0.5, float(document_y) + 0.5) / Vector2(document_size)
+				var mask_x := clampi(floori(uv.x * float(mask_size.x)), 0, mask_size.x - 1)
+				var mask_y := clampi(floori(uv.y * float(mask_size.y)), 0, mask_size.y - 1)
+				var coverage: float = mask.get(mask_y * mask_size.x + mask_x, 0.0)
+				if coverage > 0.0 and _blend_material_pixel(image, document_x - origin.x, document_y - origin.y, _material_sample_at(channel_id, uv), coverage, lock_alpha):
+					changed = true
+	return changed and target.adopt_selected_layer_image(image)
+
+
+## Composites `sample` over one pixel the way the brush does (normal blending, or colour only with alpha lock).
+func _blend_material_pixel(image: Image, x: int, y: int, sample: Color, coverage: float, lock_alpha: bool) -> bool:
+	if x < 0 or y < 0 or x >= image.get_width() or y >= image.get_height():
+		return false
+	var source_alpha := clampf(sample.a * coverage, 0.0, 1.0)
+	if source_alpha <= 0.0:
+		return false
+	var base := image.get_pixel(x, y)
+	var result := base
+	if lock_alpha:
+		if base.a <= 0.0:
+			return false
+		result.r = lerpf(base.r, sample.r, source_alpha)
+		result.g = lerpf(base.g, sample.g, source_alpha)
+		result.b = lerpf(base.b, sample.b, source_alpha)
+	else:
+		var out_alpha := source_alpha + base.a * (1.0 - source_alpha)
+		if out_alpha <= 0.0:
+			result = Color(0, 0, 0, 0)
+		else:
+			result.r = (sample.r * source_alpha + base.r * base.a * (1.0 - source_alpha)) / out_alpha
+			result.g = (sample.g * source_alpha + base.g * base.a * (1.0 - source_alpha)) / out_alpha
+			result.b = (sample.b * source_alpha + base.b * base.a * (1.0 - source_alpha)) / out_alpha
+			result.a = out_alpha
+	if result.to_rgba32() == base.to_rgba32():
+		return false
+	image.set_pixel(x, y, result)
+	return true
+
+
+func _sync_material_brush_state() -> void:
+	var active: bool = _material_brush_active and _canvas != null and _canvas.active_tool == GDDrawCanvasControl.ToolMode.BRUSH
+	if _material_button:
+		_material_button.set_pressed_no_signal(active)
+	if active and _brush_button:
+		_brush_button.set_pressed_no_signal(false)
+	if _canvas:
+		_canvas.material_pixel_source = _material_brush_pixel if active else Callable()
+		_canvas.material_region_source = _material_region_provider if active else Callable()
+		_canvas.material_stamp_recorder = _material_stamp_recorder if active else Callable()
+	if _material_options:
+		_material_options.visible = active
+	if active:
+		_update_material_brush_info()
+	else:
+		_reset_material_stroke()
+	_update_material_edit_state()
+
+
 func _select_tool(tool: int) -> void:
+	if not _material_brush_selecting:
+		_material_brush_active = false
 	if _canvas and tool != _canvas.active_tool:
 		_cancel_3d_surface_shape("Canceled 3D shape preview because the tool changed.", true)
 	if tool == GDDrawCanvasControl.ToolMode.LINE or tool == GDDrawCanvasControl.ToolMode.RECTANGLE or tool == GDDrawCanvasControl.ToolMode.ELLIPSE:
@@ -19085,6 +20621,7 @@ func _select_tool(tool: int) -> void:
 		_pan_button.set_pressed_no_signal(tool == GDDrawCanvasControl.ToolMode.PAN)
 	if _canvas:
 		_canvas.active_tool = tool
+	_sync_material_brush_state()
 	if tool != GDDrawCanvasControl.ToolMode.EYEDROPPER:
 		_hide_3d_eyedropper_loupe()
 	_update_tool_button_states()
@@ -19094,6 +20631,7 @@ func _select_tool(tool: int) -> void:
 func _has_selected_tool() -> bool:
 	return (
 		(_brush_button and _brush_button.button_pressed)
+		or (_material_button and _material_button.button_pressed)
 		or (_eraser_button and _eraser_button.button_pressed)
 		or (_fill_button and _fill_button.button_pressed)
 		or (_shape_button and _shape_button.button_pressed)
@@ -19113,6 +20651,9 @@ func _update_tool_button_states() -> void:
 	if _brush_button:
 		_update_toggle_button_icon(_brush_button)
 		_brush_button.queue_redraw()
+	if _material_button:
+		_update_toggle_button_icon(_material_button)
+		_material_button.queue_redraw()
 	if _eraser_button:
 		_update_toggle_button_icon(_eraser_button)
 		_eraser_button.queue_redraw()

@@ -19,7 +19,7 @@ enum Scope {
 }
 
 
-func discover(selected_nodes: Array, scope: int) -> Dictionary:
+func discover(selected_nodes: Array, scope: int, paint_channel := "albedo") -> Dictionary:
 	if scope < Scope.SELECTED_SURFACE or scope > Scope.EXPLICIT_SELECTION:
 		return _result(STATUS_ERROR, "Unknown 3D import scope.")
 	var roots := _sanitize_roots(selected_nodes)
@@ -48,10 +48,10 @@ func discover(selected_nodes: Array, scope: int) -> Dictionary:
 			surface_keys[surface_key] = true
 			_append_group_path(root, surface, groups, group_keys, scope == Scope.SELECTED_SURFACE)
 			var group_key := _node_key(surface)
-			_discover_surface_targets(surface, group_key, targets, issues)
+			_discover_surface_targets(surface, group_key, targets, issues, paint_channel)
 
 	if targets.is_empty():
-		var message := "No supported albedo paint targets were found in the selected scope."
+		var message := "No supported %s paint targets were found in the selected scope." % GDDrawMaterialChannels.label(paint_channel).to_lower()
 		if not issues.is_empty():
 			message = str(issues[0].get("reason", message))
 		return {
@@ -159,7 +159,8 @@ func _discover_surface_targets(
 	surface: Node3D,
 	group_key: String,
 	targets: Array[Dictionary],
-	issues: Array[Dictionary]
+	issues: Array[Dictionary],
+	paint_channel := "albedo"
 ) -> void:
 	var probe := SurfaceTarget.new()
 	var inspection: Dictionary = probe.inspect(surface)
@@ -170,7 +171,7 @@ func _discover_surface_targets(
 			"reason": str(inspection.get(MESSAGE, "Could not inspect this 3D surface.")),
 		})
 		return
-	for choice in probe.discover_material_slots():
+	for choice in probe.discover_material_slots(paint_channel):
 		var slot := int(choice.get("slot", 0))
 		var channel := str(choice.get("channel", "albedo"))
 		var binding_key := "%s|slot:%d|channel:%s|uv:0" % [_node_key(surface), slot, channel]
@@ -196,15 +197,62 @@ func _discover_surface_targets(
 			issues.push_back(descriptor)
 
 
+## A descriptor for another channel of the same surface and material slot as `primary`, flagged as a
+## companion: it is opened together with the primary target and painted by the Material Brush, but has
+## no 3D preview of its own. Empty when the surface has no such ready-to-edit channel.
+var last_skip_reason := ""
+
+
+func make_companion_descriptor(primary: Dictionary, channel: String) -> Dictionary:
+	last_skip_reason = ""
+	var surface = primary.get("source_node", null)
+	if not is_instance_valid(surface) or channel == str(primary.get("channel", "albedo")):
+		return {}
+	var probe := SurfaceTarget.new()
+	var inspection: Dictionary = probe.inspect(surface)
+	if str(inspection.get(STATUS, STATUS_ERROR)) != STATUS_OK:
+		last_skip_reason = str(inspection.get(MESSAGE, "the surface cannot be inspected"))
+		return {}
+	for choice in probe.discover_material_slots(channel):
+		if int(choice.get("slot", 0)) != int(primary.get("material_slot", 0)):
+			continue
+		if bool(choice.get("missing_material", false)):
+			last_skip_reason = "it has no material"
+			continue
+		if not bool(choice.get("supported", false)):
+			last_skip_reason = str(choice.get("reason", "its material is not supported"))
+			continue
+		return {
+			"key": "%s|slot:%d|channel:%s|uv:0" % [_node_key(surface), int(choice.get("slot", 0)), str(choice.get("channel", channel))],
+			"label": _make_paint_target_label(str(surface.name), choice),
+			"group_key": str(primary.get("group_key", "")),
+			"source_key": _node_key(surface),
+			"source_node": surface,
+			"source_class": surface.get_class(),
+			"material_slot": int(choice.get("slot", 0)),
+			"channel": str(choice.get("channel", channel)),
+			"uv_set": 0,
+			"texture_path": str(choice.get("texture_path", "")),
+			"missing_texture": bool(choice.get("missing_texture", false)),
+			"missing_material": false,
+			"choice": choice.duplicate(true),
+			"companion": true,
+		}
+	if last_skip_reason.is_empty():
+		last_skip_reason = "CSG shapes only have an albedo material" if probe.is_csg else "it has no matching material slot"
+	return {}
+
+
 func _make_paint_target_label(surface_name: String, choice: Dictionary) -> String:
-	var choice_label := str(choice.get("label", "Material · Albedo"))
-	var albedo_marker := " · Albedo"
+	var channel_label := GDDrawMaterialChannels.label(str(choice.get("channel", "albedo")))
+	var choice_label := str(choice.get("label", "Material · %s" % channel_label))
+	var albedo_marker := " · " + channel_label
 	var albedo_index := choice_label.find(albedo_marker)
 	if albedo_index >= 0:
 		choice_label = choice_label.substr(0, albedo_index + albedo_marker.length())
 	else:
 		var material_label := choice_label.split(" · ", false)[0] if not choice_label.is_empty() else "Material"
-		choice_label = "%s · Albedo" % material_label
+		choice_label = "%s · %s" % [material_label, channel_label]
 	return "%s · %s" % [surface_name, choice_label]
 
 

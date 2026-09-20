@@ -210,6 +210,16 @@ var background_color := Color.WHITE:
 			_refresh_shape_preview_image()
 		queue_redraw()
 var brush_size := 12
+## Material Brush hook: when valid, brush strokes take each pixel's colour from
+## material_pixel_source.call(x, y, brush_color, coverage) (x, y are layer-image pixels, coverage is the
+## brush's coverage of that pixel) instead of using brush_color.
+var material_pixel_source := Callable()
+## Optional native companion of material_pixel_source: material_region_source.call(Rect2i) returns the
+## material's colours for that rectangle of layer pixels as an opaque RGBA8 Image of the same size (or null when
+## it cannot, and the per-pixel hook is used). material_stamp_recorder.call(top_left, stamp_image) is told about
+## every stamp painted this way (the stamp's alpha is the brush coverage, colours included).
+var material_region_source := Callable()
+var material_stamp_recorder := Callable()
 var alpha_lock := false:
 	set(value):
 		alpha_lock = value
@@ -5471,7 +5481,177 @@ func _stamp_unmirrored(center: Vector2i) -> void:
 	_stamp_pixels(center, false)
 
 
+## Big brush stamps blend a cached, pre-coloured stamp image with Image.blend_rect (native code) instead of
+## visiting every pixel in GDScript, which is what made large brushes on big textures lag. It is used only
+## when the result is what the per-pixel path would give: plain brush blending where overlapping stamps
+## accumulate (no erase, alpha lock, selection, mirroring, per-stroke coverage or Material Brush colours).
+const FAST_STAMP_MIN_SIZE := 8
+var fast_stamp_enabled := true
+var _fast_stamp_key := ""
+var _fast_stamp_mask: Image
+var _fast_stamp_source: Image
+var _fast_stamp_source_key := ""
+
+
+func _try_fast_stamp(center: Vector2i) -> bool:
+	if (
+		not fast_stamp_enabled
+		or brush_size < FAST_STAMP_MIN_SIZE
+		or active_tool != ToolMode.BRUSH
+		or not _is_drawing
+		or not stroke_overlap_enabled
+		or alpha_lock
+		or _has_selection
+		or mirror_mode != MirrorMode.OFF
+		or (material_pixel_source.is_valid() and not material_region_source.is_valid())
+		or brush_color.a <= 0.0
+		or _is_shape_preview_rasterizing
+		or _is_shape_outline_rasterizing
+		or _is_shape_fill_rasterizing
+		or _image.get_format() != Image.FORMAT_RGBA8
+	):
+		return false
+	var mask := get_fast_stamp_mask()
+	var side := mask.get_width()
+	var reach := (side - 1) / 2
+	if material_pixel_source.is_valid():
+		return _try_fast_material_stamp(center, side, reach)
+	var source_key := str(brush_color)
+	if _fast_stamp_source == null or _fast_stamp_source_key != source_key:
+		# The stamp: the brush colour, with the coverage (times the brush opacity) as its alpha.
+		var coverage := mask.get_data()
+		var pixel_count := side * side
+		var red := int(round(brush_color.r * 255.0))
+		var green := int(round(brush_color.g * 255.0))
+		var blue := int(round(brush_color.b * 255.0))
+		var alpha_table := PackedByteArray()
+		alpha_table.resize(256)
+		for level in range(256):
+			alpha_table[level] = int(round(float(level) * brush_color.a))
+		var stamp := PackedByteArray()
+		stamp.resize(pixel_count * 4)
+		for pixel_index in range(pixel_count):
+			var offset := pixel_index * 4
+			stamp[offset] = red
+			stamp[offset + 1] = green
+			stamp[offset + 2] = blue
+			stamp[offset + 3] = alpha_table[coverage[offset + 3]]
+		_fast_stamp_source = Image.create_from_data(side, side, false, Image.FORMAT_RGBA8, stamp)
+		_fast_stamp_source_key = source_key
+	var destination := center - Vector2i(reach, reach)
+	_image.blend_rect(_fast_stamp_source, Rect2i(0, 0, side, side), destination)
+	_mark_live_composite_rect_dirty(Rect2i(destination, Vector2i(side, side)).intersection(Rect2i(Vector2i.ZERO, _image.get_size())))
+	_stroke_has_changes = true
+	return true
+
+
+## The Material Brush's version of the native stamp: the material's colours for the stamp's rectangle, with the
+## brush coverage (times the brush opacity) as alpha, blended in one call.
+func _try_fast_material_stamp(center: Vector2i, side: int, reach: int) -> bool:
+	var destination := center - Vector2i(reach, reach)
+	var region: Variant = material_region_source.call(Rect2i(destination, Vector2i(side, side)))
+	if not region is Image:
+		return false
+	var colours := region as Image
+	if colours.get_width() != side or colours.get_height() != side or colours.get_format() != Image.FORMAT_RGBA8:
+		return false
+	var alpha := _get_fast_stamp_alpha()
+	var data := colours.get_data()
+	for pixel_index in range(side * side):
+		data[pixel_index * 4 + 3] = alpha[pixel_index]
+	var stamp := Image.create_from_data(side, side, false, Image.FORMAT_RGBA8, data)
+	_image.blend_rect(stamp, Rect2i(0, 0, side, side), destination)
+	_mark_live_composite_rect_dirty(Rect2i(destination, Vector2i(side, side)).intersection(Rect2i(Vector2i.ZERO, _image.get_size())))
+	_stroke_has_changes = true
+	if material_stamp_recorder.is_valid():
+		material_stamp_recorder.call(destination, stamp)
+	return true
+
+
+var _fast_stamp_alpha_key := ""
+var _fast_stamp_alpha: PackedByteArray
+
+
+## One byte per stamp pixel: the brush coverage times the brush opacity.
+func _get_fast_stamp_alpha() -> PackedByteArray:
+	var mask := get_fast_stamp_mask()
+	var key := "%s|%s" % [_fast_stamp_key, str(brush_color.a)]
+	if key == _fast_stamp_alpha_key:
+		return _fast_stamp_alpha
+	var coverage := mask.get_data()
+	var side := mask.get_width()
+	var table := PackedByteArray()
+	table.resize(256)
+	for level in range(256):
+		table[level] = int(round(float(level) * brush_color.a))
+	var result := PackedByteArray()
+	result.resize(side * side)
+	for pixel_index in range(side * side):
+		result[pixel_index] = table[coverage[pixel_index * 4 + 3]]
+	_fast_stamp_alpha = result
+	_fast_stamp_alpha_key = key
+	return result
+
+
+## The brush's coverage as an RGBA8 image (alpha = coverage), centred on an odd-sized square. It is built
+## with the same formula as _get_brush_pixel_coverage() and cached per brush setting.
+func get_fast_stamp_mask() -> Image:
+	var key := "%d|%s|%d|%s|%s" % [brush_size, str(brush_hardness), brush_head, str(pixel_perfect), str(brush_touch_pixels)]
+	if _fast_stamp_mask != null and key == _fast_stamp_key:
+		return _fast_stamp_mask
+	var radius := maxf(0.5, float(brush_size) * 0.5)
+	var reach := int(ceil(radius + 1.0)) + 1
+	var side := reach * 2 + 1
+	var data := PackedByteArray()
+	data.resize(side * side * 4)
+	data.fill(255)
+	var square := brush_head != BrushHead.CIRCLE
+	var hardness := brush_hardness
+	var inner_radius := radius * hardness
+	var outer_radius := radius + 0.75
+	var falloff_width := maxf(0.0001, outer_radius - inner_radius)
+	var rect := _get_brush_rect(Vector2i(reach, reach))
+	var half_pixel := 0.5
+	for y in range(side):
+		var dy := y - reach
+		for x in range(side):
+			var dx := x - reach
+			var coverage := 0.0
+			if pixel_perfect:
+				# the pixel-perfect brush paints the pixels of its rectangle (and, when round, inside its circle)
+				if not rect.has_point(Vector2i(x, y)):
+					coverage = 0.0
+				elif square:
+					coverage = 1.0
+				else:
+					coverage = 1.0 if _brush_circle_contains_pixel(Vector2i(reach, reach), Vector2i(x, y)) else 0.0
+			else:
+				var distance: float
+				if square:
+					distance = maxf(absf(float(dx)), absf(float(dy)))
+				elif brush_touch_pixels:
+					# distance from the brush centre (centre of its pixel) to the pixel's rectangle
+					var nearest_x := clampf(float(reach) + half_pixel, float(x), float(x + 1))
+					var nearest_y := clampf(float(reach) + half_pixel, float(y), float(y + 1))
+					distance = Vector2(float(reach) + half_pixel - nearest_x, float(reach) + half_pixel - nearest_y).length()
+				else:
+					distance = Vector2(float(dx), float(dy)).length()
+				if distance < outer_radius:
+					if hardness >= 0.999 or distance <= inner_radius:
+						coverage = 1.0
+					else:
+						var weight := clampf((outer_radius - distance) / falloff_width, 0.0, 1.0)
+						coverage = weight * weight * (3.0 - 2.0 * weight)
+			data[(y * side + x) * 4 + 3] = int(round(coverage * 255.0))
+	_fast_stamp_mask = Image.create_from_data(side, side, false, Image.FORMAT_RGBA8, data)
+	_fast_stamp_key = key
+	_fast_stamp_source = null
+	return _fast_stamp_mask
+
+
 func _stamp_pixels(center: Vector2i, apply_mirror: bool) -> void:
+	if _try_fast_stamp(center):
+		return
 	if not pixel_perfect:
 		_stamp_antialiased(center, apply_mirror)
 		return
@@ -5841,6 +6021,8 @@ func _paint_pixel(x: int, y: int, color: Color, coverage: float, erase := false)
 				base = _stroke_start_image.get_pixel(x, y)
 	if effective_coverage <= 0.0:
 		return false
+	if not erase and material_pixel_source.is_valid() and active_tool == ToolMode.BRUSH:
+		color = material_pixel_source.call(x, y, color, effective_coverage)
 
 	var result := base
 	if erase:

@@ -83,7 +83,8 @@ func advance_import() -> Dictionary:
 			_import_job["create_dir"],
 			_import_job["texture_size"],
 			int(descriptor.get("material_slot", 0)),
-			_import_job["image_cache"]
+			_import_job["image_cache"],
+			str(descriptor.get("channel", "albedo"))
 		)
 		var status := str(result.get(STATUS, STATUS_ERROR))
 		if status == STATUS_NEEDS_CREATE:
@@ -119,7 +120,8 @@ func advance_import() -> Dictionary:
 			_import_job["create_dir"],
 			_import_job["texture_size"],
 			int(descriptor.get("material_slot", 0)),
-			_import_job["image_cache"]
+			_import_job["image_cache"],
+			str(descriptor.get("channel", "albedo"))
 		)
 		if str(result.get(STATUS, STATUS_ERROR)) != STATUS_OK:
 			clear()
@@ -192,7 +194,8 @@ func restore_session(saved_session, editor_plugin: EditorPlugin, scene_root: Nod
 				StoragePaths.DEFAULT_IMAGE_DIR,
 				paint_target.size,
 				int(saved_member.get("material_slot", 0)),
-				image_cache
+				image_cache,
+				str(saved_member.get("channel", "albedo"))
 			)
 			if str(result.get(STATUS, STATUS_ERROR)) != STATUS_OK:
 				_clear_candidate_sessions(all_candidates)
@@ -210,6 +213,7 @@ func restore_session(saved_session, editor_plugin: EditorPlugin, scene_root: Nod
 				"source_class": source.get_class(),
 				"material_slot": int(saved_member.get("material_slot", 0)),
 				"channel": str(saved_member.get("channel", "albedo")),
+				"companion": bool(saved_member.get("companion", false)),
 				"uv_set": int(saved_member.get("uv_set", 0)),
 				"label": paint_target.label,
 			}
@@ -332,6 +336,8 @@ func get_preview_entries() -> Array[Dictionary]:
 		for index in range(members.size()):
 			var member: Dictionary = members[index]
 			var descriptor: Dictionary = member.get("descriptor", {})
+			if bool(descriptor.get("companion", false)):
+				continue
 			previews.push_back({
 				"target_id": target_id,
 				"binding_key": str(descriptor.get("key", "")),
@@ -369,7 +375,8 @@ func get_binding_for_source_node(source_node: Node) -> Dictionary:
 				continue
 			var member: Dictionary = member_value
 			var descriptor: Dictionary = member.get("descriptor", {})
-			if not is_instance_valid(descriptor.get("source_node", null)):
+			# Companion channels ride along with their primary target; they never resolve a scene node.
+			if bool(descriptor.get("companion", false)) or not is_instance_valid(descriptor.get("source_node", null)):
 				continue
 			var member_source: Node = descriptor.get("source_node", null)
 			var match := {
@@ -418,8 +425,20 @@ func get_primary_binding_for_target(target_id: String) -> Dictionary:
 	return get_binding(str(descriptor.get("key", "")))
 
 
+## Whether anything is unsaved. Only a yes/no is needed, so the target being painted is checked first and the
+## others are skipped as soon as one is dirty: comparing a target with its saved texture costs a full-image copy,
+## and a Material Brush stroke changes several targets at once.
 func is_dirty(active_target_image: Image = null) -> bool:
-	return not get_dirty_target_ids(active_target_image).is_empty()
+	if not layer_session:
+		return false
+	var order: Array = [layer_session.active_target_id]
+	for target_id in texture_sessions:
+		if str(target_id) != layer_session.active_target_id:
+			order.push_back(str(target_id))
+	for target_id in order:
+		if _is_target_dirty(str(target_id), active_target_image):
+			return true
+	return false
 
 
 func get_dirty_target_ids(active_target_image: Image = null) -> PackedStringArray:
@@ -427,25 +446,26 @@ func get_dirty_target_ids(active_target_image: Image = null) -> PackedStringArra
 	if not layer_session:
 		return dirty
 	for target_id in texture_sessions:
-		var target = layer_session.get_target(str(target_id))
-		var texture_session = texture_sessions[target_id]
-		if not target or not texture_session:
-			continue
-		var cache_key := _make_target_dirty_cache_key(target, texture_session)
-		var cached: Dictionary = _target_dirty_cache.get(str(target_id), {})
-		var target_is_dirty: bool
-		if str(cached.get("key", "")) == cache_key:
-			target_is_dirty = bool(cached.get("dirty", false))
-		else:
-			var composite_image: Image = (
-				active_target_image
-				if active_target_image and str(target_id) == layer_session.active_target_id
-				else target.composite()
-			)
-			target_is_dirty = _cache_target_dirty(target, texture_session, composite_image)
-		if target_is_dirty:
+		if _is_target_dirty(str(target_id), active_target_image):
 			dirty.push_back(str(target_id))
 	return dirty
+
+
+func _is_target_dirty(target_id: String, active_target_image: Image) -> bool:
+	var target = layer_session.get_target(target_id)
+	var texture_session = texture_sessions.get(target_id)
+	if not target or not texture_session:
+		return false
+	var cache_key := _make_target_dirty_cache_key(target, texture_session)
+	var cached: Dictionary = _target_dirty_cache.get(target_id, {})
+	if str(cached.get("key", "")) == cache_key:
+		return bool(cached.get("dirty", false))
+	var composite_image: Image = (
+		active_target_image
+		if active_target_image and target_id == layer_session.active_target_id
+		else target.composite()
+	)
+	return _cache_target_dirty(target, texture_session, composite_image)
 
 
 func _cache_target_dirty(target, texture_session, composite_image: Image = null) -> bool:
@@ -617,6 +637,7 @@ func _make_persistent_binding(descriptor: Dictionary, texture_session) -> Dictio
 		"source_class": str(descriptor.get("source_class", "Node3D")),
 		"material_slot": int(descriptor.get("material_slot", 0)),
 		"channel": str(descriptor.get("channel", "albedo")),
+		"companion": bool(descriptor.get("companion", false)),
 		"uv_set": int(descriptor.get("uv_set", 0)),
 		"texture_path": str(texture_session.texture_path) if texture_session else "",
 	}

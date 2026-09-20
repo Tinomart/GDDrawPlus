@@ -1268,7 +1268,46 @@ func _resize_layer_image(source: Image, new_size: Vector2i, keep_pixels: bool) -
 	return result
 
 
+const NATIVE_RESAMPLE_MIN_PIXELS := 65536
+
+
+# Big layers (4096x4096 textures) take minutes through the per-pixel loop below, so they are resampled
+# natively. Bilinear shrinking uses the mip chain (an area average) and premultiplied alpha, like the
+# loop, so transparent pixels never bleed their colour into the edges.
+@warning_ignore("integer_division")
+func _resample_layer_image_native(source: Image, new_size: Vector2i, interpolation: int) -> Image:
+	var result: Image = source.duplicate()
+	if result.get_format() != Image.FORMAT_RGBA8:
+		result.convert(Image.FORMAT_RGBA8)
+	if result.has_mipmaps():
+		result.clear_mipmaps()
+	if interpolation == 0:
+		result.resize(new_size.x, new_size.y, Image.INTERPOLATE_NEAREST)
+		return result
+	var shrinking := new_size.x < result.get_width() or new_size.y < result.get_height()
+	var method := Image.INTERPOLATE_TRILINEAR if shrinking else Image.INTERPOLATE_BILINEAR
+	if result.detect_alpha() == Image.ALPHA_NONE:
+		result.resize(new_size.x, new_size.y, method)
+		return result
+	result.premultiply_alpha()
+	result.resize(new_size.x, new_size.y, method)
+	var bytes := result.get_data()
+	for offset in range(0, bytes.size(), 4):
+		var alpha := bytes[offset + 3]
+		if alpha == 0:
+			bytes[offset] = 0
+			bytes[offset + 1] = 0
+			bytes[offset + 2] = 0
+		elif alpha < 255:
+			bytes[offset] = mini(255, (bytes[offset] * 255 + alpha / 2) / alpha)
+			bytes[offset + 1] = mini(255, (bytes[offset + 1] * 255 + alpha / 2) / alpha)
+			bytes[offset + 2] = mini(255, (bytes[offset + 2] * 255 + alpha / 2) / alpha)
+	return Image.create_from_data(new_size.x, new_size.y, false, Image.FORMAT_RGBA8, bytes)
+
+
 func _resample_layer_image(source: Image, new_size: Vector2i, interpolation: int) -> Image:
+	if new_size.x * new_size.y >= NATIVE_RESAMPLE_MIN_PIXELS or source.get_width() * source.get_height() >= NATIVE_RESAMPLE_MIN_PIXELS * 4:
+		return _resample_layer_image_native(source, new_size, interpolation)
 	var result := Image.create_empty(new_size.x, new_size.y, false, Image.FORMAT_RGBA8)
 	var source_size := source.get_size()
 	for target_y in range(new_size.y):

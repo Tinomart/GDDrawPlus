@@ -48,6 +48,11 @@ func request_resource_filesystem_scan() -> void:
 		_dock.call("_request_resource_filesystem_scan")
 
 
+func _save_external_data() -> void:
+	if is_instance_valid(_dock) and _dock.has_method("flush_placeholder_textures"):
+		_dock.call("flush_placeholder_textures")
+
+
 func _make_dock() -> Control:
 	var dock_scene := ResourceLoader.load(DOCK_SCENE_PATH, "PackedScene", ResourceLoader.CACHE_MODE_REPLACE)
 	if not dock_scene or not dock_scene is PackedScene:

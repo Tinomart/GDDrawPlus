@@ -27,6 +27,8 @@ var mesh_snapshot: Mesh
 var mesh_instance: MeshInstance3D
 var material: StandardMaterial3D
 var material_slot := 0
+# Which material texture slot this session paints (see GDDrawMaterialChannels).
+var channel := "albedo"
 var texture_path := ""
 var texture: Texture2D
 var base_image: Image
@@ -67,12 +69,14 @@ func begin_from_mesh(mesh: MeshInstance3D, editor_plugin: EditorPlugin, create_i
 	return begin_from_target(mesh, editor_plugin, create_if_missing, create_dir, texture_size, material_slot_index)
 
 
-func begin_from_target(node: Node, editor_plugin: EditorPlugin, create_if_missing := false, create_dir := StoragePaths.DEFAULT_IMAGE_DIR, texture_size := DEFAULT_TEXTURE_SIZE, material_slot_index := 0, image_cache: Dictionary = {}) -> Dictionary:
+func begin_from_target(node: Node, editor_plugin: EditorPlugin, create_if_missing := false, create_dir := StoragePaths.DEFAULT_IMAGE_DIR, texture_size := DEFAULT_TEXTURE_SIZE, material_slot_index := 0, image_cache: Dictionary = {}, paint_channel := "albedo") -> Dictionary:
 	_ensure_uv_overlay()
 	clear()
 	target = _make_target()
 	if not target:
 		return _result(STATUS_ERROR, "Could not load the editable 3D surface target helper.")
+	channel = paint_channel if GDDrawMaterialChannels.has_channel(paint_channel) else GDDrawMaterialChannels.ALBEDO
+	target.channel = channel
 	var inspection: Dictionary = target.inspect(node)
 	if inspection.get(STATUS, STATUS_ERROR) != STATUS_OK:
 		clear()
@@ -87,10 +91,10 @@ func begin_from_target(node: Node, editor_plugin: EditorPlugin, create_if_missin
 		return selection
 	material = target.material
 	_capture_preview_transform_state()
-	texture = material.albedo_texture if material else null
+	texture = GDDrawMaterialChannels.get_editable_texture(material, channel) if material else null
 	texture_path = _get_editable_texture_path(texture)
-	if texture_path.is_empty() and material and material.has_meta("gddraw_texture_path"):
-		var remembered_path := str(material.get_meta("gddraw_texture_path", "")).strip_edges()
+	if texture_path.is_empty() and material and material.has_meta(_texture_path_meta_key()):
+		var remembered_path := str(material.get_meta(_texture_path_meta_key(), "")).strip_edges()
 		if remembered_path.begins_with("res://"):
 			texture_path = remembered_path
 	_refresh_uv_data()
@@ -101,8 +105,8 @@ func begin_from_target(node: Node, editor_plugin: EditorPlugin, create_if_missin
 			MESSAGE: (
 				"%s has no material. Create a StandardMaterial3D and PNG albedo texture?"
 				if not material
-				else "%s has no albedo texture. Create one?"
-			) % source_node.name,
+				else "%s has no %s texture. Create one?"
+			) % ([source_node.name, GDDrawMaterialChannels.label(channel).to_lower()] if material else [source_node.name]),
 			UV_EDGES: uv_edges,
 			UV_VERTICES: uv_vertices,
 			"missing_material": material == null,
@@ -124,7 +128,7 @@ func begin_from_target(node: Node, editor_plugin: EditorPlugin, create_if_missin
 		image = _load_active_texture_image()
 	if not image or image.is_empty():
 		clear()
-		return _result(STATUS_ERROR, "Could not load a readable albedo texture image.")
+		return _result(STATUS_ERROR, "Could not load a readable %s texture image." % GDDrawMaterialChannels.label(channel).to_lower())
 	if cached.is_empty():
 		cached = {IMAGE: image, "base": image.duplicate(), "baseline": image.duplicate()}
 		if not image_key.is_empty():
@@ -134,7 +138,7 @@ func begin_from_target(node: Node, editor_plugin: EditorPlugin, create_if_missin
 	baseline_image = cached["baseline"]
 	return {
 		STATUS: STATUS_OK,
-		MESSAGE: "Editing %s albedo texture." % source_node.name,
+		MESSAGE: "Editing %s %s texture." % [source_node.name, GDDrawMaterialChannels.label(channel).to_lower()],
 		IMAGE: image,
 		LABEL: texture_path if not texture_path.is_empty() else "3D albedo texture",
 		UV_EDGES: uv_edges,
@@ -154,9 +158,9 @@ func save_image(image: Image, editor_plugin: EditorPlugin) -> Dictionary:
 	if not has_active_session():
 		return _result(STATUS_ERROR, "No active 3D texture session.")
 	if texture_path.is_empty() and material:
-		texture_path = _get_editable_texture_path(material.albedo_texture)
-		if texture_path.is_empty() and material.has_meta("gddraw_texture_path"):
-			texture_path = str(material.get_meta("gddraw_texture_path", "")).strip_edges()
+		texture_path = _get_editable_texture_path(GDDrawMaterialChannels.read_texture(material, channel))
+		if texture_path.is_empty() and material.has_meta(_texture_path_meta_key()):
+			texture_path = str(material.get_meta(_texture_path_meta_key(), "")).strip_edges()
 	if texture_path.is_empty():
 		return _result(STATUS_ERROR, "The active material texture has no editable resource path.")
 	var write_result := _write_image(image, texture_path)
@@ -170,6 +174,7 @@ func save_image(image: Image, editor_plugin: EditorPlugin) -> Dictionary:
 			(texture as ImageTexture).update(editable_image)
 		else:
 			var resized_texture := ImageTexture.create_from_image(editable_image)
+			resized_texture.set_meta("gddraw_source_path", texture_path)
 			if not _assign_active_texture(editor_plugin, resized_texture):
 				return _result(STATUS_ERROR, "Saved the resized PNG, but could not update its material texture reference.")
 			texture = resized_texture
@@ -224,8 +229,40 @@ func assign_saved_image_as(image: Image, path: String, next_texture: Texture2D, 
 	texture = next_texture
 	baseline_image = editable_image.duplicate()
 	if material:
-		material.set_meta("gddraw_texture_path", path)
+		material.set_meta(_texture_path_meta_key(), path)
 	return _result(STATUS_OK, "Saved as " + texture_path)
+
+
+# GDDraw hands out new textures as in-memory ImageTextures that only remember their PNG path. A scene saved
+# while the material still holds one embeds every pixel as text (a 4096x4096 texture is ~250 MB, which freezes
+# the editor when the scene is opened). Once Godot has imported the PNG, put the real file into the material
+# instead, but only when its pixels equal what the material shows now, so no painted data can be lost.
+func swap_placeholder_for_imported_texture() -> bool:
+	if not has_active_session() or baseline_image == null or texture_path.is_empty():
+		return false
+	# The session's private material and the scene's live surface material each hold their own placeholder.
+	var candidates: Array = [material]
+	if target and is_instance_valid(target.source_node):
+		var slot_material := target.get_material_for_slot(material_slot) as StandardMaterial3D
+		if slot_material and slot_material != material:
+			candidates.push_back(slot_material)
+	var pending: Array = []
+	for candidate in candidates:
+		var current := GDDrawMaterialChannels.read_texture(candidate, channel)
+		if current is ImageTexture and (current == texture or str(current.get_meta("gddraw_source_path", "")) == texture_path):
+			pending.push_back(candidate)
+	if pending.is_empty() or not ResourceLoader.exists(texture_path, "Texture2D"):
+		return false
+	var imported := ResourceLoader.load(texture_path, "Texture2D") as Texture2D
+	if imported == null or imported is ImageTexture or Vector2i(imported.get_size()) != baseline_image.get_size():
+		return false
+	var imported_image := _make_editable_image(imported.get_image())
+	if imported_image == null or not _images_equal_rgba8(imported_image, baseline_image):
+		return false
+	for candidate in pending:
+		GDDrawMaterialChannels.write_texture(candidate, channel, imported)
+	texture = imported
+	return true
 
 
 func has_active_session() -> bool:
@@ -381,6 +418,7 @@ func clear() -> void:
 	mesh_instance = null
 	material = null
 	material_slot = 0
+	channel = GDDrawMaterialChannels.ALBEDO
 	texture_path = ""
 	texture = null
 	base_image = null
@@ -402,12 +440,17 @@ func _create_and_assign_albedo_texture(editor_plugin: EditorPlugin, create_dir: 
 	if dir_error != OK:
 		return _result(STATUS_ERROR, "Could not create texture folder. Error: " + str(dir_error))
 	texture_path = _make_unique_texture_path(create_dir, source_node.name)
-	var image := Image.create_empty(texture_size.x, texture_size.y, false, Image.FORMAT_RGBA8)
-	image.fill(Color.WHITE)
+	var image: Image
+	if channel == GDDrawMaterialChannels.ALBEDO or not material:
+		image = Image.create_empty(texture_size.x, texture_size.y, false, Image.FORMAT_RGBA8)
+		image.fill(Color.WHITE)
+	else:
+		# Other channels start from the material's current look: its value, or the packed texture it replaces.
+		image = GDDrawMaterialChannels.make_initial_image(material, channel, GDDrawMaterialChannels.matching_size(material, texture_size))
 	var save_error := image.save_png(texture_path)
 	if save_error != OK:
 		texture_path = ""
-		return _result(STATUS_ERROR, "Could not create albedo texture. Error: " + str(save_error))
+		return _result(STATUS_ERROR, "Could not create the %s texture. Error: " % GDDrawMaterialChannels.label(channel).to_lower() + str(save_error))
 	var new_texture := _make_path_backed_texture(image, texture_path, editor_plugin)
 	var assigned: bool = target.assign_new_material_and_texture(editor_plugin, new_texture) if not material else target.assign_texture(editor_plugin, new_texture)
 	if not assigned:
@@ -454,13 +497,13 @@ func _assign_active_texture(editor_plugin: EditorPlugin, next_texture: Texture2D
 			# editor undo/redo. Keep Save As useful by updating only the retained
 			# private-session material; reopening the old scene is intentionally
 			# treated as a new source until the user chooses it again.
-			material.albedo_texture = next_texture
+			GDDrawMaterialChannels.write_texture(material, channel, next_texture)
 			target.material = material
-			return material.albedo_texture == next_texture
+			return GDDrawMaterialChannels.read_texture(material, channel) == next_texture
 		var previous_material := material
 		var assigned: bool = target.assign_texture(editor_plugin, next_texture)
 		var active_material := target.get_material_for_slot(material_slot) as StandardMaterial3D
-		if assigned and active_material and active_material.albedo_texture == next_texture:
+		if assigned and active_material and GDDrawMaterialChannels.read_texture(active_material, channel) == next_texture:
 			material = active_material
 			target.material = active_material
 			return true
@@ -472,18 +515,18 @@ func _assign_active_texture(editor_plugin: EditorPlugin, next_texture: Texture2D
 		return false
 	if not material:
 		return false
-	var previous_texture := material.albedo_texture
+	var previous_texture := GDDrawMaterialChannels.read_texture(material, channel)
 	var undo_redo := editor_plugin.get_undo_redo() if editor_plugin else null
 	if undo_redo:
-		undo_redo.create_action("Assign GDDraw Albedo Texture")
-		undo_redo.add_do_property(material, "albedo_texture", next_texture)
-		undo_redo.add_undo_property(material, "albedo_texture", previous_texture)
+		undo_redo.create_action("Assign GDDraw %s Texture" % GDDrawMaterialChannels.label(channel))
+		undo_redo.add_do_property(material, GDDrawMaterialChannels.texture_property(channel), next_texture)
+		undo_redo.add_undo_property(material, GDDrawMaterialChannels.texture_property(channel), previous_texture)
 		undo_redo.commit_action()
 	else:
-		material.albedo_texture = next_texture
-	if material.albedo_texture != next_texture:
-		material.albedo_texture = next_texture
-	return material.albedo_texture == next_texture
+		GDDrawMaterialChannels.write_texture(material, channel, next_texture)
+	if GDDrawMaterialChannels.read_texture(material, channel) != next_texture:
+		GDDrawMaterialChannels.write_texture(material, channel, next_texture)
+	return GDDrawMaterialChannels.read_texture(material, channel) == next_texture
 
 
 func _load_active_texture_image() -> Image:
@@ -600,10 +643,15 @@ func _make_unique_texture_path(dir_path: String, source_name: String) -> String:
 		safe_name = "surface"
 	for index in range(1, 1000):
 		var suffix := "" if index == 1 else "_%03d" % index
-		var candidate := "%s/%s_albedo%s.png" % [dir_path.trim_suffix("/"), safe_name, suffix]
+		var candidate := "%s/%s_%s%s.png" % [dir_path.trim_suffix("/"), safe_name, GDDrawMaterialChannels.file_suffix(channel), suffix]
 		if not FileAccess.file_exists(candidate):
 			return candidate
-	return "%s/%s_albedo_%d.png" % [dir_path.trim_suffix("/"), safe_name, Time.get_unix_time_from_system()]
+	return "%s/%s_%s_%d.png" % [dir_path.trim_suffix("/"), safe_name, GDDrawMaterialChannels.file_suffix(channel), Time.get_unix_time_from_system()]
+
+
+# The remembered texture path lives in material metadata; each channel needs its own key.
+func _texture_path_meta_key() -> String:
+	return "gddraw_texture_path" if channel == GDDrawMaterialChannels.ALBEDO else "gddraw_texture_path_%s" % channel
 
 
 func _result(status: String, message: String) -> Dictionary:
